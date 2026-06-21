@@ -13,6 +13,13 @@ create table public.profiles (
     is_verified boolean default false,
     is_banned boolean default false,
     vehicle_info text,
+    kyc_dob text,
+    kyc_id_type text,
+    kyc_id_number text,
+    kyc_id_file text,
+    kyc_license_number text,
+    kyc_license_expiry text,
+    kyc_license_file text,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -201,4 +208,35 @@ on public.completed_rides for insert with check (
 create policy "Users can update completed rides they were part of"
 on public.completed_rides for update using (
   auth.uid() = driver_id or auth.uid() = passenger_id
+);
+
+-- 7. MESSAGES TABLE (for real-time passenger/driver chat)
+create table public.messages (
+    id uuid default gen_random_uuid() primary key,
+    booking_id uuid references public.bookings(id) on delete cascade not null,
+    sender_id uuid references public.profiles(id) on delete cascade not null,
+    content text not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable RLS on messages
+alter table public.messages enable row level security;
+
+create policy "Users can view messages for bookings they are part of"
+on public.messages for select using (
+  exists (
+    select 1 from public.bookings b
+    join public.trips t on b.trip_id = t.id
+    where b.id = booking_id and (auth.uid() = b.passenger_id or auth.uid() = t.driver_id)
+  )
+);
+
+create policy "Users can insert messages for bookings they are part of"
+on public.messages for insert with check (
+  auth.uid() = sender_id and
+  exists (
+    select 1 from public.bookings b
+    join public.trips t on b.trip_id = t.id
+    where b.id = booking_id and (auth.uid() = b.passenger_id or auth.uid() = t.driver_id)
+  )
 );

@@ -5,8 +5,15 @@
 -- 1. Enable pgcrypto extension for bcrypt password encryption
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 2. Add is_banned column to public.profiles if it does not exist
+-- 2. Add is_banned column and KYC columns to public.profiles if they do not exist
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_banned boolean default false;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_dob text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_id_type text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_id_number text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_id_file text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_license_number text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_license_expiry text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_license_file text;
 
 -- 3. Clean up any existing conflicting users to ensure a clean slate
 DELETE FROM auth.users WHERE email IN ('admin@coride.io', 'alex@coride.io', 'sarah@coride.io', 'marcus@coride.io');
@@ -101,9 +108,44 @@ VALUES (
 
 -- 6. Ensure profile details are fully populated and updated
 UPDATE public.profiles SET role = 'admin', is_verified = true, is_banned = false WHERE email = 'admin@coride.io';
-UPDATE public.profiles SET role = 'driver', is_verified = true, vehicle_info = 'Tesla Model 3 (Midnight Silver)', is_banned = false WHERE email = 'alex@coride.io';
-UPDATE public.profiles SET role = 'passenger', is_verified = true, is_banned = false WHERE email = 'sarah@coride.io';
-UPDATE public.profiles SET role = 'driver', is_verified = false, vehicle_info = 'Toyota Prius (Emerald Green)', is_banned = false WHERE email = 'marcus@coride.io';
+
+UPDATE public.profiles SET 
+  role = 'driver', 
+  is_verified = true, 
+  vehicle_info = 'Tesla Model 3 (Midnight Silver)', 
+  is_banned = false,
+  kyc_dob = '1995-04-12',
+  kyc_id_type = 'license',
+  kyc_id_number = 'DL-88776655',
+  kyc_id_file = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="150" height="100" viewBox="0 0 150 100"><rect width="100%" height="100%" fill="%231e293b"/><text x="10" y="30" fill="%2338bdf8" font-size="12" font-family="sans-serif">MOCK ID CARD</text><text x="10" y="55" fill="white" font-size="10" font-family="sans-serif">Alex Mercer</text><text x="10" y="75" fill="%2364748b" font-size="8" font-family="sans-serif">ID: DL-88776655</text></svg>',
+  kyc_license_number = 'DL-88776655',
+  kyc_license_expiry = '2029-08-30',
+  kyc_license_file = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="150" height="100" viewBox="0 0 150 100"><rect width="100%" height="100%" fill="%230f172a"/><text x="10" y="30" fill="%2310b981" font-size="12" font-family="sans-serif">DRIVER LICENSE</text><text x="10" y="55" fill="white" font-size="10" font-family="sans-serif">Alex Mercer</text><text x="10" y="75" fill="%2364748b" font-size="8" font-family="sans-serif">Exp: 2029-08-30</text></svg>'
+WHERE email = 'alex@coride.io';
+
+UPDATE public.profiles SET 
+  role = 'passenger', 
+  is_verified = true, 
+  is_banned = false,
+  kyc_dob = '1998-11-23',
+  kyc_id_type = 'passport',
+  kyc_id_number = 'PP-99221100',
+  kyc_id_file = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="150" height="100" viewBox="0 0 150 100"><rect width="100%" height="100%" fill="%231e293b"/><text x="10" y="30" fill="%2338bdf8" font-size="12" font-family="sans-serif">MOCK ID CARD</text><text x="10" y="55" fill="white" font-size="10" font-family="sans-serif">Sarah Connor</text><text x="10" y="75" fill="%2364748b" font-size="8" font-family="sans-serif">ID: PP-99221100</text></svg>'
+WHERE email = 'sarah@coride.io';
+
+UPDATE public.profiles SET 
+  role = 'driver', 
+  is_verified = false, 
+  vehicle_info = 'Toyota Prius (Emerald Green)', 
+  is_banned = false,
+  kyc_dob = '1992-07-07',
+  kyc_id_type = 'national_id',
+  kyc_id_number = 'NID-55443322',
+  kyc_id_file = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="150" height="100" viewBox="0 0 150 100"><rect width="100%" height="100%" fill="%231e293b"/><text x="10" y="30" fill="%2338bdf8" font-size="12" font-family="sans-serif">MOCK ID CARD</text><text x="10" y="55" fill="white" font-size="10" font-family="sans-serif">Marcus Vance</text><text x="10" y="75" fill="%2364748b" font-size="8" font-family="sans-serif">ID: NID-55443322</text></svg>',
+  kyc_license_number = 'DL-33445566',
+  kyc_license_expiry = '2028-12-31',
+  kyc_license_file = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="150" height="100" viewBox="0 0 150 100"><rect width="100%" height="100%" fill="%230f172a"/><text x="10" y="30" fill="%2310b981" font-size="12" font-family="sans-serif">DRIVER LICENSE</text><text x="10" y="55" fill="white" font-size="10" font-family="sans-serif">Marcus Vance</text><text x="10" y="75" fill="%2364748b" font-size="8" font-family="sans-serif">Exp: 2028-12-31</text></svg>'
+WHERE email = 'marcus@coride.io';
 
 -- 7. Add Policies for Superadmin Controls (allows editing & deleting all user records)
 DROP POLICY IF EXISTS "Admins can update any profile" ON public.profiles;
@@ -164,4 +206,37 @@ DROP POLICY IF EXISTS "Users can update completed rides they were part of" ON pu
 CREATE POLICY "Users can update completed rides they were part of"
 ON public.completed_rides FOR UPDATE USING (
   auth.uid() = driver_id or auth.uid() = passenger_id
+);
+
+-- 9. Create messages table if it does not exist
+CREATE TABLE IF NOT EXISTS public.messages (
+    id uuid default gen_random_uuid() primary key,
+    booking_id uuid references public.bookings(id) on delete cascade not null,
+    sender_id uuid references public.profiles(id) on delete cascade not null,
+    content text not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable RLS on messages
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view messages for bookings they are part of" ON public.messages;
+CREATE POLICY "Users can view messages for bookings they are part of"
+ON public.messages FOR SELECT USING (
+  exists (
+    select 1 from public.bookings b
+    join public.trips t on b.trip_id = t.id
+    where b.id = booking_id and (auth.uid() = b.passenger_id or auth.uid() = t.driver_id)
+  )
+);
+
+DROP POLICY IF EXISTS "Users can insert messages for bookings they are part of" ON public.messages;
+CREATE POLICY "Users can insert messages for bookings they are part of"
+ON public.messages FOR INSERT WITH CHECK (
+  auth.uid() = sender_id and
+  exists (
+    select 1 from public.bookings b
+    join public.trips t on b.trip_id = t.id
+    where b.id = booking_id and (auth.uid() = b.passenger_id or auth.uid() = t.driver_id)
+  )
 );

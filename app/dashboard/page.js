@@ -112,7 +112,14 @@ function KYCForm({ user, triggerNotification, onVerified }) {
         const updates = {
           full_name: kycFullName,
           is_verified: true,
-          vehicle_info: vehicleInfoStr
+          vehicle_info: vehicleInfoStr,
+          kyc_dob: kycDob,
+          kyc_id_type: kycIdType,
+          kyc_id_number: kycIdNumber,
+          kyc_id_file: kycIdFile,
+          kyc_license_number: isDriver ? kycLicenseNumber : null,
+          kyc_license_expiry: isDriver ? kycLicenseExpiry : null,
+          kyc_license_file: isDriver ? kycLicenseFile : null
         };
 
         const { error: profileErr } = await supabase
@@ -123,11 +130,7 @@ function KYCForm({ user, triggerNotification, onVerified }) {
         if (profileErr) throw profileErr;
 
         const { error: authErr } = await supabase.auth.updateUser({
-          data: {
-            full_name: kycFullName,
-            is_verified: true,
-            vehicle_info: vehicleInfoStr
-          }
+          data: updates
         });
 
         if (authErr) throw authErr;
@@ -139,7 +142,14 @@ function KYCForm({ user, triggerNotification, onVerified }) {
               ...p,
               full_name: kycFullName,
               is_verified: true,
-              vehicle_info: vehicleInfoStr
+              vehicle_info: vehicleInfoStr,
+              kyc_dob: kycDob,
+              kyc_id_type: kycIdType,
+              kyc_id_number: kycIdNumber,
+              kyc_id_file: kycIdFile,
+              kyc_license_number: isDriver ? kycLicenseNumber : null,
+              kyc_license_expiry: isDriver ? kycLicenseExpiry : null,
+              kyc_license_file: isDriver ? kycLicenseFile : null
             };
           }
           return p;
@@ -385,8 +395,12 @@ function DashboardContent() {
   const [adminRoleFilter, setAdminRoleFilter] = useState('all'); // all | driver | passenger | admin
   const [adminStatusFilter, setAdminStatusFilter] = useState('all'); // all | verified | unverified | banned
 
-  // Ride & Commuter Rating State
-  const [activeRatingItem, setActiveRatingItem] = useState(null); // The completed ride item being rated
+  // State for KYC Dossier & Chat Modals
+  const [selectedKycUser, setSelectedKycUser] = useState(null);
+  const [activeChatBooking, setActiveChatBooking] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [activeRatingItem, setActiveRatingItem] = useState(null);
   const [ratingStars, setRatingStars] = useState(5);
   const [ratingComment, setRatingComment] = useState('');
 
@@ -589,6 +603,128 @@ function DashboardContent() {
     };
   }, [user]);
 
+  // 💬 REAL-TIME CHAT SYNC (SUPABASE OR LOCALSTORAGE FALLBACK)
+  useEffect(() => {
+    if (!activeChatBooking) {
+      setChatMessages([]);
+      return;
+    }
+
+    let activeChannel = null;
+
+    const loadChatHistory = async () => {
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('booking_id', activeChatBooking.id)
+          .order('created_at', { ascending: true });
+        
+        if (data && !error) {
+          setChatMessages(data);
+        }
+      } else {
+        const storedMsgs = JSON.parse(localStorage.getItem('coride_mock_messages') || '[]');
+        const filtered = storedMsgs.filter(m => m.booking_id === activeChatBooking.id);
+        setChatMessages(filtered);
+      }
+    };
+
+    loadChatHistory();
+
+    if (supabase) {
+      activeChannel = supabase
+        .channel(`chat-room-${activeChatBooking.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'messages', filter: `booking_id=eq.${activeChatBooking.id}` },
+          (payload) => {
+            setChatMessages(prev => [...prev, payload.new]);
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      if (activeChannel && supabase) {
+        supabase.removeChannel(activeChannel);
+      }
+    };
+  }, [activeChatBooking]);
+
+  // Send chat message
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !activeChatBooking) return;
+
+    const messageText = chatInput.trim();
+    setChatInput('');
+
+    const newMsg = {
+      booking_id: activeChatBooking.id,
+      sender_id: user.id,
+      content: messageText
+    };
+
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('messages')
+          .insert([newMsg]);
+        if (error) throw error;
+      } else {
+        const storedMsgs = JSON.parse(localStorage.getItem('coride_mock_messages') || '[]');
+        const formattedMsg = {
+          id: `msg-${Date.now()}`,
+          created_at: new Date().toISOString(),
+          ...newMsg
+        };
+        const updated = [...storedMsgs, formattedMsg];
+        localStorage.setItem('coride_mock_messages', JSON.stringify(updated));
+        
+        setChatMessages(prev => [...prev, formattedMsg]);
+
+        const isUserPassenger = user.id === activeChatBooking.passenger_id;
+        const trip = trips.find(t => t.id === activeChatBooking.trip_id);
+        const botName = isUserPassenger ? (trip?.driver_name || 'Alex Mercer') : activeChatBooking.passenger_name;
+        const botId = isUserPassenger ? (trip?.driver_id || 'usr-1') : activeChatBooking.passenger_id;
+
+        setTimeout(() => {
+          const replies = [
+            `Perfect! Looking forward to sharing the commute.`,
+            `Sounds great! I will be at the pick-up spot on time.`,
+            `Sure, that works for me. See you soon!`,
+            `Got it. I will keep you posted if I run into traffic.`,
+            `Awesome! Let's save some fuel together! 🚗🌱`
+          ];
+          const randomReply = replies[Math.floor(Math.random() * replies.length)];
+
+          const botMsg = {
+            id: `msg-bot-${Date.now()}`,
+            booking_id: activeChatBooking.id,
+            sender_id: botId,
+            content: randomReply,
+            created_at: new Date().toISOString()
+          };
+
+          const freshMsgs = JSON.parse(localStorage.getItem('coride_mock_messages') || '[]');
+          localStorage.setItem('coride_mock_messages', JSON.stringify([...freshMsgs, botMsg]));
+
+          setActiveChatBooking(currentChat => {
+            if (currentChat && currentChat.id === activeChatBooking.id) {
+              setChatMessages(prev => [...prev, botMsg]);
+              triggerNotification(`New message from ${botName}`, 'info', 'Message Received');
+            }
+            return currentChat;
+          });
+        }, 1500);
+      }
+    } catch (err) {
+      console.error('Error sending message:', err);
+      triggerNotification(err.message || 'Failed to send message.', 'warning', 'Chat Error');
+    }
+  };
+
   const triggerSimulatedEvent = () => {
     if (!user) return;
 
@@ -778,6 +914,90 @@ function DashboardContent() {
       localStorage.setItem('coride_mock_bookings', JSON.stringify(finalBookings));
       loadData();
     }, 5000);
+  };
+
+  // PASSENGER / DRIVER: Cancel Booking (releases seats)
+  const handleCancelBooking = async (bookingId) => {
+    try {
+      let bookingItem = bookings.find(b => b.id === bookingId);
+      if (!bookingItem) return;
+
+      const targetTrip = trips.find(t => t.id === bookingItem.trip_id);
+      const isAccepted = bookingItem.status === 'accepted';
+
+      if (supabase) {
+        if (isAccepted && targetTrip) {
+          const { error: tripErr } = await supabase
+            .from('trips')
+            .update({ seats_available: targetTrip.seats_available + 1 })
+            .eq('id', targetTrip.id);
+          if (tripErr) throw tripErr;
+        }
+
+        const { error: bookingErr } = await supabase
+          .from('bookings')
+          .delete()
+          .eq('id', bookingId);
+        if (bookingErr) throw bookingErr;
+      } else {
+        const freshBookings = JSON.parse(localStorage.getItem('coride_mock_bookings') || '[]');
+        const updatedBookings = freshBookings.filter(b => b.id !== bookingId);
+        localStorage.setItem('coride_mock_bookings', JSON.stringify(updatedBookings));
+
+        if (isAccepted && targetTrip) {
+          const freshTrips = JSON.parse(localStorage.getItem('coride_mock_trips') || '[]');
+          const updatedTrips = freshTrips.map(t => {
+            if (t.id === targetTrip.id) {
+              return { ...t, seats_available: Math.min(t.seats_total, t.seats_available + 1) };
+            }
+            return t;
+          });
+          localStorage.setItem('coride_mock_trips', JSON.stringify(updatedTrips));
+        }
+      }
+
+      triggerNotification('Carpool booking has been cancelled and seats updated.', 'info', 'Booking Cancelled');
+      loadData();
+    } catch (err) {
+      console.error('Error cancelling booking:', err);
+      triggerNotification(err.message || 'Failed to cancel booking.', 'warning', 'Error');
+    }
+  };
+
+  // DRIVER: Cancel posted trip (marks all bookings as cancelled / deletes them)
+  const handleCancelTrip = async (tripId) => {
+    if (!confirm('Are you sure you want to cancel this entire commute route? All passenger bookings will be cancelled.')) {
+      return;
+    }
+    try {
+      if (supabase) {
+        const { error: bookingErr } = await supabase
+          .from('bookings')
+          .delete()
+          .eq('trip_id', tripId);
+        if (bookingErr) throw bookingErr;
+
+        const { error: tripErr } = await supabase
+          .from('trips')
+          .delete()
+          .eq('id', tripId);
+        if (tripErr) throw tripErr;
+      } else {
+        const freshTrips = JSON.parse(localStorage.getItem('coride_mock_trips') || '[]');
+        const updatedTrips = freshTrips.filter(t => t.id !== tripId);
+        localStorage.setItem('coride_mock_trips', JSON.stringify(updatedTrips));
+
+        const freshBookings = JSON.parse(localStorage.getItem('coride_mock_bookings') || '[]');
+        const updatedBookings = freshBookings.filter(b => b.trip_id !== tripId);
+        localStorage.setItem('coride_mock_bookings', JSON.stringify(updatedBookings));
+      }
+
+      triggerNotification('Commute route cancelled and removed from matching feed.', 'warning', 'Trip Cancelled');
+      loadData();
+    } catch (err) {
+      console.error('Error cancelling trip:', err);
+      triggerNotification(err.message || 'Failed to cancel trip.', 'warning', 'Error');
+    }
   };
 
   // DRIVER: Post new trip
@@ -1308,6 +1528,11 @@ function DashboardContent() {
     trips.some(t => t.id === b.trip_id && t.driver_id === user?.id)
   );
 
+  const driverAcceptedBookings = bookings.filter(b => 
+    b.status === 'accepted' && 
+    trips.some(t => t.id === b.trip_id && t.driver_id === user?.id)
+  );
+
   const filteredProfiles = allProfiles.filter(p => {
     const matchesSearch = !adminSearchQuery || 
                           p.full_name?.toLowerCase().includes(adminSearchQuery.toLowerCase()) || 
@@ -1596,6 +1821,115 @@ function DashboardContent() {
             
             {/* Passenger Actions & Trip Search */}
             <div className="lg:col-span-7 flex flex-col gap-6">
+
+              {/* Your Booked Commutes */}
+              <div className="glass-panel rounded-2xl p-6 border border-white/10 flex flex-col gap-4">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Compass className="w-5 h-5 text-brand-cyan" /> Your Booked Commutes
+                </h2>
+                
+                {userBookings.length === 0 ? (
+                  <p className="text-xs text-brand-text-muted italic bg-white/5 p-4 rounded-xl border border-white/5 text-center">
+                    You haven't booked any commutes yet. Use the search panel below to find and book a ride.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {userBookings.map(booking => {
+                      const trip = trips.find(t => t.id === booking.trip_id);
+                      return (
+                        <div 
+                          key={booking.id} 
+                          className="p-4 rounded-xl bg-white/5 border border-white/5 flex flex-col gap-3 hover:border-brand-cyan/20 transition-all"
+                        >
+                          <div className="flex justify-between items-start flex-wrap gap-2">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full overflow-hidden border border-white/10">
+                                <img 
+                                  src={trip?.driver_avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'} 
+                                  alt={trip?.driver_name || 'Driver'} 
+                                  className="object-cover w-full h-full" 
+                                />
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold text-white flex items-center gap-1">
+                                  {trip?.driver_name || 'Vetted Driver'} 
+                                  <span className="text-[10px] text-brand-cyan">({trip?.driver_rating || '5.0'} ★)</span>
+                                </p>
+                                <span className={`inline-block text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full mt-0.5 ${
+                                  booking.status === 'accepted' ? 'bg-brand-emerald/10 text-brand-emerald border border-brand-emerald/20 animate-pulse' :
+                                  booking.status === 'rejected' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                                  'bg-white/5 text-brand-text-muted border border-white/10'
+                                }`}>
+                                  {booking.status}
+                                </span>
+                              </div>
+                            </div>
+                            
+                            <div className="text-right">
+                              <p className="text-xs font-bold text-brand-emerald">${trip?.price || '8.00'}</p>
+                              <p className="text-[9px] text-brand-text-muted mt-0.5">
+                                {trip ? new Date(trip.departure_time).toLocaleDateString() : ''}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Route details */}
+                          <div className="grid grid-cols-2 gap-3 text-[11px] bg-brand-dark/50 p-2.5 rounded-lg border border-white/5">
+                            <div>
+                              <span className="text-[8px] uppercase text-brand-text-muted">From</span>
+                              <p className="font-semibold text-white/90 truncate">{trip?.origin || 'Origin Location'}</p>
+                            </div>
+                            <div>
+                              <span className="text-[8px] uppercase text-brand-text-muted">To</span>
+                              <p className="font-semibold text-white/90 truncate">{trip?.destination || 'Destination Location'}</p>
+                            </div>
+                          </div>
+
+                          {/* Contact & Driver details */}
+                          {trip?.vehicle_info && (
+                            <p className="text-[10px] text-brand-text-muted italic">
+                              Vehicle: <span className="text-white/80">{trip.vehicle_info}</span>
+                            </p>
+                          )}
+
+                          {/* Actions */}
+                          <div className="flex justify-between items-center border-t border-white/5 pt-3 flex-wrap gap-2">
+                            <button
+                              onClick={() => handleCancelBooking(booking.id)}
+                              className="px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 text-[10px] font-bold transition-all cursor-pointer"
+                            >
+                              Cancel Booking
+                            </button>
+
+                            <div className="flex gap-2">
+                              {/* Chat trigger */}
+                              <button
+                                onClick={() => {
+                                  setActiveChatBooking(booking);
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white text-[10px] font-bold border border-white/10 flex items-center gap-1 transition-all cursor-pointer"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                Chat Driver
+                              </button>
+
+                              {/* Live Track trigger */}
+                              {booking.status === 'accepted' && trip && (
+                                <button
+                                  onClick={() => handleTrackTrip(trip, booking)}
+                                  className="px-3 py-1.5 rounded-lg bg-brand-cyan hover:bg-cyan-400 text-brand-dark text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-md shadow-brand-cyan/10"
+                                >
+                                  <Navigation className="w-3 h-3" /> Track Location
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
               
               {/* Search Panel */}
               <div className="glass-panel rounded-2xl p-6 border border-white/10">
@@ -2078,15 +2412,78 @@ function DashboardContent() {
                         
                         <div className="flex items-center justify-between border-t border-white/5 pt-2 mt-1">
                           <span className="text-[10px] text-brand-text-muted">{trip.seats_available}/{trip.seats_total} seats available</span>
-                          <button
-                            onClick={() => handleCompleteRide(trip)}
-                            className="px-3 py-1 rounded bg-brand-cyan hover:bg-cyan-400 text-brand-dark text-[10px] font-bold transition-all cursor-pointer"
-                          >
-                            Mark Completed
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleCancelTrip(trip.id)}
+                              className="px-3 py-1 rounded bg-red-500/15 hover:bg-red-500/30 text-red-400 hover:text-red-300 text-[10px] font-bold transition-all cursor-pointer"
+                            >
+                              Cancel Commute
+                            </button>
+                            <button
+                              onClick={() => handleCompleteRide(trip)}
+                              className="px-3 py-1 rounded bg-brand-cyan hover:bg-cyan-400 text-brand-dark text-[10px] font-bold transition-all cursor-pointer shadow-md shadow-brand-cyan/10"
+                            >
+                              Mark Completed
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Confirmed Passengers */}
+              <div className="glass-panel rounded-2xl p-5 border border-white/10">
+                <h3 className="text-sm font-bold text-white mb-4">Confirmed Peer Commuters</h3>
+                
+                {driverAcceptedBookings.length === 0 ? (
+                  <p className="text-xs text-brand-text-muted italic bg-white/5 p-4 rounded-xl border border-white/5 text-center">
+                    No confirmed peer passengers yet.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {driverAcceptedBookings.map(booking => {
+                      const trip = trips.find(t => t.id === booking.trip_id);
+                      return (
+                        <div key={booking.id} className="p-4 rounded-xl bg-white/5 border border-white/5 flex flex-col gap-3 hover:border-brand-emerald/10 transition-all">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full overflow-hidden border border-white/10">
+                                <img src={booking.passenger_avatar} alt={booking.passenger_name} className="object-cover w-full h-full" />
+                              </div>
+                              <div>
+                                <p className="text-xs font-semibold text-white">{booking.passenger_name}</p>
+                                <p className="text-[10px] text-brand-text-muted">
+                                  commutes to: <span className="text-white/80">{trip?.destination || 'Destination'}</span>
+                                </p>
+                              </div>
+                            </div>
+
+                            <span className="text-[9px] bg-brand-emerald/10 text-brand-emerald border border-brand-emerald/20 px-2 py-0.5 rounded-full font-bold uppercase">
+                              Active
+                            </span>
+                          </div>
+
+                          <div className="flex justify-between items-center border-t border-white/5 pt-3">
+                            <button
+                              onClick={() => handleCancelBooking(booking.id)}
+                              className="px-2.5 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 text-[10px] font-bold transition-all cursor-pointer"
+                            >
+                              Remove Rider
+                            </button>
+
+                            <button
+                              onClick={() => setActiveChatBooking(booking)}
+                              className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white text-[10px] font-bold border border-white/10 flex items-center gap-1 transition-all cursor-pointer"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                              Chat Passenger
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2417,6 +2814,14 @@ function DashboardContent() {
                             >
                               Delete
                             </button>
+
+                            {/* KYC Info Button */}
+                            <button
+                              onClick={() => setSelectedKycUser(p)}
+                              className="px-2 py-1 rounded bg-brand-purple/20 hover:bg-brand-purple text-brand-purple hover:text-brand-dark text-[10px] font-bold transition-all cursor-pointer"
+                            >
+                              KYC Info
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -2555,6 +2960,261 @@ function DashboardContent() {
           </div>
         </div>
       )}
+
+      {/* KYC DOSSIER MODAL OVERLAY */}
+      {selectedKycUser && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
+          <div className="glass-panel max-w-2xl w-full rounded-3xl p-6 border border-white/10 flex flex-col gap-5 max-h-[90vh] overflow-y-auto animate-scale-in relative">
+            <button
+              onClick={() => setSelectedKycUser(null)}
+              className="absolute top-4 right-4 text-brand-text-muted hover:text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <span className="text-[10px] bg-brand-purple/15 text-brand-purple border border-brand-purple/20 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                KYC Dossier Review
+              </span>
+              <h3 className="text-lg font-bold text-white mt-2 flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-brand-purple" /> {selectedKycUser.full_name}'s Vetting Info
+              </h3>
+              <p className="text-xs text-brand-text-muted">
+                Audit registered identity, driving license verification, and physical vehicle safety checklists.
+              </p>
+            </div>
+
+            {/* Profile trust summary */}
+            <div className="flex items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/5">
+              <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 border-2 border-brand-purple">
+                <img 
+                  src={selectedKycUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'} 
+                  alt="User Avatar" 
+                  className="object-cover w-full h-full"
+                />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-white leading-tight">{selectedKycUser.full_name}</p>
+                <p className="text-xs text-brand-text-muted mt-0.5">{selectedKycUser.email}</p>
+                <div className="flex gap-4 mt-2">
+                  <span className="text-[10px] text-brand-text-muted capitalize">Role: <strong className="text-white">{selectedKycUser.role}</strong></span>
+                  <span className="text-[10px] text-brand-text-muted">Status: <strong className={selectedKycUser.is_verified ? "text-brand-emerald" : "text-yellow-500"}>{selectedKycUser.is_verified ? "Verified" : "Pending Vetting"}</strong></span>
+                  {selectedKycUser.is_banned && <span className="text-[10px] text-red-400 font-bold">Suspended</span>}
+                </div>
+              </div>
+            </div>
+
+            {/* KYC Submission Details */}
+            {selectedKycUser.kyc_dob ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* ID Details Card */}
+                <div className="flex flex-col gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2">Identity Details</h4>
+                  
+                  <div className="flex flex-col gap-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-brand-text-muted">Date of Birth:</span>
+                      <span className="text-white font-semibold">{selectedKycUser.kyc_dob}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-brand-text-muted">ID Type:</span>
+                      <span className="text-white font-semibold capitalize">{selectedKycUser.kyc_id_type?.replace('_', ' ')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-brand-text-muted">Document Number:</span>
+                      <span className="text-white font-semibold">{selectedKycUser.kyc_id_number}</span>
+                    </div>
+                  </div>
+
+                  {selectedKycUser.kyc_id_file ? (
+                    <div className="flex flex-col gap-2 mt-2">
+                      <span className="text-[10px] uppercase font-bold text-brand-text-muted">Official ID Image:</span>
+                      <div className="relative w-full h-32 rounded-xl overflow-hidden border border-white/10 group cursor-pointer bg-black flex items-center justify-center">
+                        <img 
+                          src={selectedKycUser.kyc_id_file} 
+                          alt="ID Document" 
+                          className="object-contain max-h-full" 
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-yellow-500 italic mt-2">No ID image document uploaded.</p>
+                  )}
+                </div>
+
+                {/* Driver Licensing Card */}
+                {selectedKycUser.role === 'driver' && (
+                  <div className="flex flex-col gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2">Driver Licensing</h4>
+                    
+                    <div className="flex flex-col gap-2 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-brand-text-muted">License Plate:</span>
+                        <span className="text-white font-semibold">{selectedKycUser.vehicle_info || 'Not Vetted'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-brand-text-muted">License Number:</span>
+                        <span className="text-white font-semibold">{selectedKycUser.kyc_license_number || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-brand-text-muted">Expiry Date:</span>
+                        <span className="text-white font-semibold">{selectedKycUser.kyc_license_expiry || 'N/A'}</span>
+                      </div>
+                    </div>
+
+                    {selectedKycUser.kyc_license_file ? (
+                      <div className="flex flex-col gap-2 mt-2">
+                        <span className="text-[10px] uppercase font-bold text-brand-text-muted">Driving License:</span>
+                        <div className="relative w-full h-32 rounded-xl overflow-hidden border border-white/10 group cursor-pointer bg-black flex items-center justify-center">
+                          <img 
+                            src={selectedKycUser.kyc_license_file} 
+                            alt="License Document" 
+                            className="object-contain max-h-full" 
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-yellow-500 italic mt-2">No license photo uploaded.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="p-8 text-center text-brand-text-muted text-xs border border-dashed border-white/5 rounded-2xl">
+                This user has not completed the identity verification form yet.
+              </div>
+            )}
+
+            {/* Quick Actions Footer */}
+            <div className="flex flex-wrap gap-3 mt-4 pt-4 border-t border-white/5 justify-end">
+              <button
+                onClick={() => setSelectedKycUser(null)}
+                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-xl text-xs font-semibold transition-all cursor-pointer"
+              >
+                Close
+              </button>
+              
+              <button
+                onClick={async () => {
+                  await handleToggleVerify(selectedKycUser.id, selectedKycUser.is_verified);
+                  setSelectedKycUser(prev => ({ ...prev, is_verified: !prev.is_verified }));
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  selectedKycUser.is_verified 
+                    ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
+                    : 'bg-brand-emerald/15 text-brand-emerald hover:bg-brand-emerald/25 border border-brand-emerald/20'
+                }`}
+              >
+                {selectedKycUser.is_verified ? 'Revoke Verification' : 'Verify Account'}
+              </button>
+
+              <button
+                onClick={async () => {
+                  await handleToggleBan(selectedKycUser.id, selectedKycUser.is_banned);
+                  setSelectedKycUser(prev => ({ ...prev, is_banned: !prev.is_banned }));
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  selectedKycUser.is_banned 
+                    ? 'bg-brand-cyan/15 text-brand-cyan hover:bg-brand-cyan/25' 
+                    : 'bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20'
+                }`}
+              >
+                {selectedKycUser.is_banned ? 'Restore Account' : 'Suspend Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* REAL-TIME CHAT MODAL OVERLAY */}
+      {activeChatBooking && (() => {
+        const isUserPassenger = user.id === activeChatBooking.passenger_id;
+        const trip = trips.find(t => t.id === activeChatBooking.trip_id);
+        const chatPartnerName = isUserPassenger ? (trip?.driver_name || 'Vetted Driver') : activeChatBooking.passenger_name;
+        const chatPartnerAvatar = isUserPassenger ? (trip?.driver_avatar || '') : activeChatBooking.passenger_avatar;
+        const chatPartnerRole = isUserPassenger ? 'Driver' : 'Passenger';
+        
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
+            <div className="glass-panel max-w-lg w-full rounded-3xl p-6 border border-white/10 flex flex-col h-[520px] max-h-[80vh] animate-scale-in relative shadow-2xl">
+              
+              {/* Close Button */}
+              <button
+                onClick={() => setActiveChatBooking(null)}
+                className="absolute top-4 right-4 text-brand-text-muted hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* Chat Header */}
+              <div className="flex items-center gap-3 border-b border-white/5 pb-4 shrink-0">
+                <div className="w-10 h-10 rounded-full overflow-hidden border border-white/10 relative">
+                  <img 
+                    src={chatPartnerAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'} 
+                    alt="Chat Partner Avatar" 
+                    className="object-cover w-full h-full" 
+                  />
+                  <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-brand-emerald rounded-full border-2 border-brand-dark"></div>
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white leading-tight">{chatPartnerName}</h4>
+                  <p className="text-[10px] text-brand-text-muted capitalize mt-0.5">{chatPartnerRole} • Active Coordination</p>
+                </div>
+              </div>
+
+              {/* Message History area */}
+              <div className="flex-1 overflow-y-auto py-4 flex flex-col gap-3 scrollbar-thin pr-1">
+                {chatMessages.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-brand-text-muted text-xs">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" className="mb-2 text-white/20"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    <p className="font-semibold text-white/40">Secure Peer-to-Peer Chat</p>
+                    <p className="text-[10px] max-w-[200px] mt-1 text-center">Coordinate departure times, locations, and safety preferences in real time.</p>
+                  </div>
+                ) : (
+                  chatMessages.map(msg => {
+                    const isSenderMe = msg.sender_id === user.id;
+                    return (
+                      <div 
+                        key={msg.id} 
+                        className={`flex flex-col max-w-[75%] ${isSenderMe ? 'self-end items-end' : 'self-start items-start'}`}
+                      >
+                        <div className={`p-3 rounded-2xl text-xs leading-relaxed ${
+                          isSenderMe 
+                            ? 'bg-brand-cyan text-brand-dark rounded-tr-none font-medium' 
+                            : 'bg-white/5 border border-white/5 text-white rounded-tl-none'
+                        }`}>
+                          {msg.content}
+                        </div>
+                        <span className="text-[8px] text-brand-text-muted mt-1 px-1">
+                          {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Chat Input area */}
+              <form onSubmit={handleSendMessage} className="flex gap-2 border-t border-white/5 pt-4 shrink-0">
+                <input
+                  type="text"
+                  placeholder="Type a secure message..."
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  className="flex-1 py-2.5 px-4 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-white/30 focus:border-brand-cyan focus:outline-none focus:ring-1 focus:ring-brand-cyan"
+                />
+                <button
+                  type="submit"
+                  disabled={!chatInput.trim()}
+                  className="px-4 py-2.5 bg-brand-cyan hover:bg-cyan-400 disabled:opacity-40 disabled:hover:bg-brand-cyan text-brand-dark font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md shadow-brand-cyan/10 shrink-0"
+                >
+                  Send
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );
