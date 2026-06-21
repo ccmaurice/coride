@@ -11,6 +11,7 @@ create table public.profiles (
     rating numeric(3,2) default 5.00 check (rating >= 1.00 and rating <= 5.00),
     trips_count integer default 0 check (trips_count >= 0),
     is_verified boolean default false,
+    is_banned boolean default false,
     vehicle_info text,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
@@ -23,6 +24,20 @@ on public.profiles for select using (true);
 
 create policy "Users can update their own profile" 
 on public.profiles for update using (auth.uid() = id);
+
+create policy "Admins can update any profile"
+on public.profiles for update using (
+  exists (
+    select 1 from public.profiles where id = auth.uid() and role = 'admin'
+  )
+);
+
+create policy "Admins can delete any profile"
+on public.profiles for delete using (
+  exists (
+    select 1 from public.profiles where id = auth.uid() and role = 'admin'
+  )
+);
 
 -- 2. TRIPS TABLE
 create table public.trips (

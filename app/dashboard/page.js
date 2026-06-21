@@ -51,7 +51,7 @@ const MapComponent = dynamic(() => import('../../components/MapComponent'), {
 
 function DashboardContent() {
   const searchParams = useSearchParams();
-  const { user, role, switchProfile, allProfiles, loading, refreshUser } = useUser();
+  const { user, role, switchProfile, allProfiles, loading, refreshUser, refreshAllProfiles, logout } = useUser();
 
   // State Management
   const [activeTab, setActiveTab] = useState('passenger'); // passenger | driver | admin
@@ -88,6 +88,11 @@ function DashboardContent() {
   // Toast Notification State
   const [toasts, setToasts] = useState([]);
   const [simulatorActive, setSimulatorActive] = useState(true);
+
+  // Admin User Directory Filters
+  const [adminSearchQuery, setAdminSearchQuery] = useState('');
+  const [adminRoleFilter, setAdminRoleFilter] = useState('all'); // all | driver | passenger | admin
+  const [adminStatusFilter, setAdminStatusFilter] = useState('all'); // all | verified | unverified | banned
 
   // Helper to add toast notification
   const triggerNotification = (message, type = 'success', title = 'Notification') => {
@@ -581,22 +586,32 @@ function DashboardContent() {
   };
 
   // ADMIN: Vetting Drivers
-  const handleVerifyDriver = (driverId) => {
-    const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
-    const updated = profiles.map(p => {
-      if (p.id === driverId) {
-        return { ...p, is_verified: true };
+  const handleVerifyDriver = async (driverId) => {
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ is_verified: true })
+          .eq('id', driverId);
+        if (error) throw error;
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        const updated = profiles.map(p => {
+          if (p.id === driverId) {
+            return { ...p, is_verified: true };
+          }
+          return p;
+        });
+        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
       }
-      return p;
-    });
-    localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
-    
-    if (user && user.id === driverId) {
-      switchProfile(driverId);
+      
+      triggerNotification('Driver credentials reviewed and status set to Verified!', 'success', 'Vetting Approved');
+      await refreshAllProfiles();
+      loadData();
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to verify driver.', 'warning', 'Admin Error');
     }
-    loadData();
-    
-    triggerNotification('Driver credentials reviewed and status set to Verified!', 'success', 'Vetting Approved');
   };
 
   // ADMIN: Approve Subsidies
@@ -608,6 +623,118 @@ function DashboardContent() {
     updateLocalStorage('subsidies', updated);
     
     triggerNotification('Subsidy audit approved. Municipal funds disbursed!', 'success', 'Subsidy Audited');
+  };
+
+  // ADMIN ACTIONS: Toggle Verification
+  const handleToggleVerify = async (profileId, currentStatus) => {
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ is_verified: !currentStatus })
+          .eq('id', profileId);
+        if (error) throw error;
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        const updated = profiles.map(p => {
+          if (p.id === profileId) return { ...p, is_verified: !currentStatus };
+          return p;
+        });
+        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+      }
+      triggerNotification(`User verification status updated.`, 'success', 'Admin Action');
+      await refreshAllProfiles();
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to update verification.', 'warning', 'Admin Error');
+    }
+  };
+
+  // ADMIN ACTIONS: Toggle Ban
+  const handleToggleBan = async (profileId, currentStatus) => {
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ is_banned: !currentStatus })
+          .eq('id', profileId);
+        if (error) throw error;
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        const updated = profiles.map(p => {
+          if (p.id === profileId) return { ...p, is_banned: !currentStatus };
+          return p;
+        });
+        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+      }
+      triggerNotification(`User account has been ${!currentStatus ? 'suspended (banned)' : 'restored'}.`, 'success', 'Admin Action');
+      await refreshAllProfiles();
+      
+      if (profileId === user.id) {
+        await refreshUser();
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to update ban status.', 'warning', 'Admin Error');
+    }
+  };
+
+  // ADMIN ACTIONS: Edit User Role
+  const handleUpdateUserRole = async (profileId, newRole) => {
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ role: newRole })
+          .eq('id', profileId);
+        if (error) throw error;
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        const updated = profiles.map(p => {
+          if (p.id === profileId) return { ...p, role: newRole };
+          return p;
+        });
+        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+      }
+      triggerNotification(`User role updated to ${newRole}.`, 'success', 'Admin Action');
+      await refreshAllProfiles();
+      
+      if (profileId === user.id) {
+        await refreshUser();
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to update user role.', 'warning', 'Admin Error');
+    }
+  };
+
+  // ADMIN ACTIONS: Delete User Profile
+  const handleDeleteUserProfile = async (profileId, email) => {
+    if (!confirm(`Are you sure you want to permanently delete profile for ${email}? This action is irreversible.`)) {
+      return;
+    }
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('profiles')
+          .delete()
+          .eq('id', profileId);
+        if (error) throw error;
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        const updated = profiles.filter(p => p.id !== profileId);
+        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+      }
+      triggerNotification(`User profile for ${email} has been permanently deleted.`, 'success', 'Admin Action');
+      await refreshAllProfiles();
+      
+      if (profileId === user.id) {
+        logout();
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to delete user profile.', 'warning', 'Admin Error');
+    }
   };
 
   // Setup view for map tracking when passenger has accepted trip
@@ -662,12 +789,50 @@ function DashboardContent() {
     trips.some(t => t.id === b.trip_id && t.driver_id === user?.id)
   );
 
+  const filteredProfiles = allProfiles.filter(p => {
+    const matchesSearch = !adminSearchQuery || 
+                          p.full_name?.toLowerCase().includes(adminSearchQuery.toLowerCase()) || 
+                          p.email?.toLowerCase().includes(adminSearchQuery.toLowerCase());
+    
+    const matchesRole = adminRoleFilter === 'all' || p.role === adminRoleFilter;
+    
+    let matchesStatus = true;
+    if (adminStatusFilter === 'verified') matchesStatus = p.is_verified && !p.is_banned;
+    else if (adminStatusFilter === 'unverified') matchesStatus = !p.is_verified && !p.is_banned;
+    else if (adminStatusFilter === 'banned') matchesStatus = p.is_banned;
+    
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+
   if (loading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-brand-dark min-h-[70vh]">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 rounded-full border-4 border-brand-cyan border-t-transparent animate-spin"></div>
           <p className="text-xs text-brand-text-muted">Loading your CoRide Dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (user && user.is_banned) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-brand-dark min-h-[70vh] px-4 relative overflow-hidden">
+        <div className="absolute top-1/4 left-1/4 w-80 h-80 bg-red-500/5 rounded-full blur-[100px] pointer-events-none"></div>
+        <div className="glass-panel max-w-md w-full rounded-2xl p-8 border border-red-500/20 text-center flex flex-col items-center gap-4 bg-red-500/5 relative z-10 shadow-2xl animate-fade-in">
+          <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20">
+            <ShieldAlert className="w-8 h-8 text-red-500" />
+          </div>
+          <h1 className="text-xl font-extrabold text-white">Account Suspended</h1>
+          <p className="text-xs text-brand-text-muted leading-relaxed">
+            Your CoRide account has been suspended by a platform administrator for violating community guidelines.
+          </p>
+          <button 
+            onClick={() => logout()}
+            className="w-full mt-2 py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-xs transition-colors flex items-center justify-center gap-1.5 shadow-lg shadow-red-500/20 cursor-pointer"
+          >
+            Sign Out
+          </button>
         </div>
       </div>
     );
@@ -1583,14 +1748,149 @@ function DashboardContent() {
                 )}
               </div>
 
-              {/* User Moderation Queue */}
-              <div className="glass-panel rounded-2xl p-6 border border-white/10">
-                <div className="flex items-center gap-2 mb-4">
-                  <ShieldAlert className="w-5 h-5 text-red-400" />
-                  <h2 className="text-base font-bold text-white">Content Moderation & Flagged</h2>
+              {/* User Directory & Moderation */}
+              <div className="glass-panel rounded-2xl p-6 border border-white/10 flex flex-col gap-4">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className="w-5 h-5 text-brand-cyan" />
+                    <h2 className="text-base font-bold text-white">User Directory & Moderation</h2>
+                  </div>
+                  <span className="text-xs text-brand-text-muted">
+                    {filteredProfiles.length} of {allProfiles.length} Users Listed
+                  </span>
                 </div>
-                <div className="p-4 text-center text-brand-text-muted text-xs border border-dashed border-white/5 rounded-xl">
-                  No pending flagged reports. User community safety guidelines are fully in compliance.
+
+                <p className="text-xs text-brand-text-muted leading-relaxed">
+                  Manage user accounts, toggle safety verifications, update platform roles, ban violators, or permanently delete profiles.
+                </p>
+
+                {/* Filters */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
+                  <div>
+                    <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">Search User</label>
+                    <input 
+                      type="text" 
+                      placeholder="Name or email..."
+                      value={adminSearchQuery}
+                      onChange={(e) => setAdminSearchQuery(e.target.value)}
+                      className="w-full py-1.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs text-white placeholder-white/30 focus:border-brand-cyan focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">Filter Role</label>
+                    <select 
+                      value={adminRoleFilter}
+                      onChange={(e) => setAdminRoleFilter(e.target.value)}
+                      className="w-full py-1.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:border-brand-cyan focus:outline-none"
+                    >
+                      <option value="all">All Roles</option>
+                      <option value="driver">Drivers</option>
+                      <option value="passenger">Passengers</option>
+                      <option value="admin">Administrators</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">Filter Status</label>
+                    <select 
+                      value={adminStatusFilter}
+                      onChange={(e) => setAdminStatusFilter(e.target.value)}
+                      className="w-full py-1.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs text-white focus:border-brand-cyan focus:outline-none"
+                    >
+                      <option value="all">All Statuses</option>
+                      <option value="verified">Verified Only</option>
+                      <option value="unverified">Unverified Only</option>
+                      <option value="banned">Banned Only</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* User List */}
+                <div className="flex flex-col gap-3 max-h-[450px] overflow-y-auto pr-1">
+                  {filteredProfiles.length === 0 ? (
+                    <div className="p-8 text-center text-brand-text-muted text-xs border border-dashed border-white/5 rounded-xl">
+                      No users matching the filters were found.
+                    </div>
+                  ) : (
+                    filteredProfiles.map(p => (
+                      <div key={p.id} className="p-4 rounded-xl bg-white/5 border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all hover:bg-white/10">
+                        {/* User Metadata */}
+                        <div className="flex items-center gap-3">
+                          <div className="relative w-10 h-10 rounded-full overflow-hidden shrink-0 border border-white/10">
+                            <img src={p.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'} alt={p.full_name} className="object-cover w-full h-full" />
+                            {p.is_banned && (
+                              <div className="absolute inset-0 bg-red-500/50 flex items-center justify-center">
+                                <span className="text-[8px] bg-red-600 text-white font-extrabold px-1 rounded">BANNED</span>
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="text-xs font-bold text-white leading-tight">{p.full_name}</p>
+                              {p.is_verified && <span className="text-[8px] font-bold bg-brand-emerald/10 text-brand-emerald px-1.5 py-0.5 rounded-full border border-brand-emerald/20">Vetted</span>}
+                              {p.is_banned && <span className="text-[8px] font-bold bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-full border border-red-500/20">Suspended</span>}
+                            </div>
+                            <p className="text-[10px] text-brand-text-muted leading-tight mt-0.5">{p.email}</p>
+                            <p className="text-[9px] text-brand-text-muted leading-tight mt-0.5">Rating: {p.rating} ★ • {p.trips_count || 0} rides</p>
+                          </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="flex items-center gap-3 self-end md:self-auto flex-wrap">
+                          {/* Role Selector */}
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[8px] text-brand-text-muted uppercase font-bold">Access Role</span>
+                            <select 
+                              value={p.role} 
+                              onChange={(e) => handleUpdateUserRole(p.id, e.target.value)}
+                              disabled={p.id === user.id} // Cannot demote yourself
+                              className="py-1 px-2 rounded bg-brand-dark border border-white/10 text-[10px] text-white focus:outline-none cursor-pointer"
+                            >
+                              <option value="passenger">Passenger</option>
+                              <option value="driver">Driver</option>
+                              <option value="admin">Administrator</option>
+                            </select>
+                          </div>
+
+                          {/* Quick Action Buttons */}
+                          <div className="flex items-center gap-1.5 mt-2 md:mt-0">
+                            {/* Toggle Vetting */}
+                            <button
+                              onClick={() => handleToggleVerify(p.id, p.is_verified)}
+                              className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                                p.is_verified 
+                                  ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20' 
+                                  : 'bg-brand-emerald/15 text-brand-emerald hover:bg-brand-emerald/25'
+                              }`}
+                            >
+                              {p.is_verified ? 'Unverify' : 'Verify'}
+                            </button>
+
+                            {/* Toggle Ban */}
+                            <button
+                              onClick={() => handleToggleBan(p.id, p.is_banned)}
+                              disabled={p.id === user.id} // Cannot ban yourself
+                              className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                                p.is_banned 
+                                  ? 'bg-brand-cyan/15 text-brand-cyan hover:bg-brand-cyan/25' 
+                                  : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                              }`}
+                            >
+                              {p.is_banned ? 'Restore' : 'Suspend'}
+                            </button>
+
+                            {/* Delete Button */}
+                            <button
+                              onClick={() => handleDeleteUserProfile(p.id, p.email)}
+                              disabled={p.id === user.id} // Cannot delete yourself
+                              className="px-2 py-1 rounded bg-red-500/25 hover:bg-red-500 text-red-400 text-[10px] font-bold hover:text-white transition-all cursor-pointer"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 

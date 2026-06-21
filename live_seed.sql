@@ -5,7 +5,10 @@
 -- 1. Enable pgcrypto extension for bcrypt password encryption
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 2. Clean up any existing conflicting users to ensure a clean slate
+-- 2. Add is_banned column to public.profiles if it does not exist
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_banned boolean default false;
+
+-- 3. Clean up any existing conflicting users to ensure a clean slate
 DELETE FROM auth.users WHERE email IN ('admin@coride.io', 'alex@coride.io', 'sarah@coride.io', 'marcus@coride.io');
 
 -- 2. Seed Admin User
@@ -97,7 +100,24 @@ VALUES (
 ) ON CONFLICT (id) DO NOTHING;
 
 -- 6. Ensure profile details are fully populated and updated
-UPDATE public.profiles SET role = 'admin', is_verified = true WHERE email = 'admin@coride.io';
-UPDATE public.profiles SET role = 'driver', is_verified = true, vehicle_info = 'Tesla Model 3 (Midnight Silver)' WHERE email = 'alex@coride.io';
-UPDATE public.profiles SET role = 'passenger', is_verified = true WHERE email = 'sarah@coride.io';
-UPDATE public.profiles SET role = 'driver', is_verified = false, vehicle_info = 'Toyota Prius (Emerald Green)' WHERE email = 'marcus@coride.io';
+UPDATE public.profiles SET role = 'admin', is_verified = true, is_banned = false WHERE email = 'admin@coride.io';
+UPDATE public.profiles SET role = 'driver', is_verified = true, vehicle_info = 'Tesla Model 3 (Midnight Silver)', is_banned = false WHERE email = 'alex@coride.io';
+UPDATE public.profiles SET role = 'passenger', is_verified = true, is_banned = false WHERE email = 'sarah@coride.io';
+UPDATE public.profiles SET role = 'driver', is_verified = false, vehicle_info = 'Toyota Prius (Emerald Green)', is_banned = false WHERE email = 'marcus@coride.io';
+
+-- 7. Add Policies for Superadmin Controls (allows editing & deleting all user records)
+DROP POLICY IF EXISTS "Admins can update any profile" ON public.profiles;
+CREATE POLICY "Admins can update any profile" ON public.profiles
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+DROP POLICY IF EXISTS "Admins can delete any profile" ON public.profiles;
+CREATE POLICY "Admins can delete any profile" ON public.profiles
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'
+    )
+  );

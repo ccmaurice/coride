@@ -75,31 +75,33 @@ export default function Navbar() {
 
               {dropdownOpen && (
                 <div className="absolute right-0 mt-2 w-64 rounded-2xl glass-panel shadow-2xl p-2 border border-white/10 animate-fade-in">
-                  <div className="px-3 py-2 border-b border-white/5 mb-2">
-                    <p className="text-[10px] uppercase font-bold text-brand-text-muted">Simulate User Role</p>
-                    <p className="text-xs text-white/50 mb-2">Quickly swap accounts to test different dashboard roles:</p>
-                    
-                    {/* User Quick Switcher */}
-                    <div className="flex flex-col gap-1">
-                      {allProfiles.map((p) => (
-                        <button
-                          key={p.id}
-                          onClick={() => {
-                            switchProfile(p.id);
-                            setDropdownOpen(false);
-                          }}
-                          className={`flex items-center justify-between p-1.5 rounded-lg text-left text-xs transition-colors ${
-                            user.id === p.id 
-                              ? 'bg-brand-cyan/15 text-brand-cyan font-medium border border-brand-cyan/20' 
-                              : 'hover:bg-white/5 text-brand-text-muted hover:text-white'
-                          }`}
-                        >
-                          <span className="truncate">{p.full_name} ({p.role})</span>
-                          {user.id === p.id && <span className="w-1.5 h-1.5 rounded-full bg-brand-cyan"></span>}
-                        </button>
-                      ))}
+                  {user.role === 'admin' && (
+                    <div className="px-3 py-2 border-b border-white/5 mb-2">
+                      <p className="text-[10px] uppercase font-bold text-brand-text-muted">Simulate User Role</p>
+                      <p className="text-xs text-white/50 mb-2">Quickly swap accounts to test different dashboard roles:</p>
+                      
+                      {/* User Quick Switcher */}
+                      <div className="flex flex-col gap-1">
+                        {allProfiles.map((p) => (
+                          <button
+                            key={p.id}
+                            onClick={() => {
+                              switchProfile(p.id);
+                              setDropdownOpen(false);
+                            }}
+                            className={`flex items-center justify-between p-1.5 rounded-lg text-left text-xs transition-colors ${
+                              user.id === p.id 
+                                ? 'bg-brand-cyan/15 text-brand-cyan font-medium border border-brand-cyan/20' 
+                                : 'hover:bg-white/5 text-brand-text-muted hover:text-white'
+                            }`}
+                          >
+                            <span className="truncate">{p.full_name} ({p.role})</span>
+                            {user.id === p.id && <span className="w-1.5 h-1.5 rounded-full bg-brand-cyan"></span>}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <Link
                     href="/dashboard"
