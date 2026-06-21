@@ -5,6 +5,9 @@
 -- 1. Enable pgcrypto extension for bcrypt password encryption
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- 2. Clean up any existing conflicting users to ensure a clean slate
+DELETE FROM auth.users WHERE email IN ('admin@coride.io', 'alex@coride.io', 'sarah@coride.io', 'marcus@coride.io');
+
 -- 2. Seed Admin User
 INSERT INTO auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, recovery_sent_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, confirmation_token, email_change, email_change_token_new, recovery_token)
 VALUES (
