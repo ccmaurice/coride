@@ -121,3 +121,47 @@ CREATE POLICY "Admins can delete any profile" ON public.profiles
       SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'
     )
   );
+
+-- 8. Create completed_rides table if it does not exist
+CREATE TABLE IF NOT EXISTS public.completed_rides (
+    id uuid default gen_random_uuid() primary key,
+    trip_id uuid not null,
+    driver_id uuid references public.profiles(id) on delete cascade not null,
+    driver_name text not null,
+    driver_avatar text,
+    passenger_id uuid references public.profiles(id) on delete cascade not null,
+    passenger_name text not null,
+    passenger_avatar text,
+    destination text not null,
+    departure_time timestamp with time zone not null,
+    rated_by_passenger boolean default false,
+    rated_by_driver boolean default false,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable RLS on completed_rides
+ALTER TABLE public.completed_rides ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view completed rides they were part of" ON public.completed_rides;
+CREATE POLICY "Users can view completed rides they were part of"
+ON public.completed_rides FOR SELECT USING (
+  auth.uid() = driver_id or auth.uid() = passenger_id
+);
+
+DROP POLICY IF EXISTS "Admins can view all completed rides" ON public.completed_rides;
+CREATE POLICY "Admins can view all completed rides"
+ON public.completed_rides FOR SELECT USING (
+  exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+);
+
+DROP POLICY IF EXISTS "Users can insert completed rides" ON public.completed_rides;
+CREATE POLICY "Users can insert completed rides"
+ON public.completed_rides FOR INSERT WITH CHECK (
+  auth.uid() = driver_id
+);
+
+DROP POLICY IF EXISTS "Users can update completed rides they were part of" ON public.completed_rides;
+CREATE POLICY "Users can update completed rides they were part of"
+ON public.completed_rides FOR UPDATE USING (
+  auth.uid() = driver_id or auth.uid() = passenger_id
+);

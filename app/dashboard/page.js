@@ -49,6 +49,297 @@ const MapComponent = dynamic(() => import('../../components/MapComponent'), {
   )
 });
 
+function KYCForm({ user, triggerNotification, onVerified }) {
+  const [kycFullName, setKycFullName] = useState(user?.full_name || '');
+  const [kycDob, setKycDob] = useState('');
+  const [kycIdType, setKycIdType] = useState('passport'); // passport | license | national_id
+  const [kycIdNumber, setKycIdNumber] = useState('');
+  const [kycIdFile, setKycIdFile] = useState('');
+  const [kycIdFileName, setKycIdFileName] = useState('');
+
+  const [kycLicenseNumber, setKycLicenseNumber] = useState('');
+  const [kycLicenseExpiry, setKycLicenseExpiry] = useState('');
+  const [kycLicenseFile, setKycLicenseFile] = useState('');
+  const [kycLicenseFileName, setKycLicenseFileName] = useState('');
+  const [kycVehicleModel, setKycVehicleModel] = useState('');
+  const [kycLicensePlate, setKycLicensePlate] = useState('');
+  
+  const [submittingKyc, setSubmittingKyc] = useState(false);
+
+  const handleKycFileChange = (e, fileType) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      triggerNotification('Please select a file smaller than 2MB.', 'warning', 'File Too Large');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (fileType === 'id') {
+        setKycIdFile(reader.result);
+        setKycIdFileName(file.name);
+      } else if (fileType === 'license') {
+        setKycLicenseFile(reader.result);
+        setKycLicenseFileName(file.name);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleCompleteKYC = async (e) => {
+    e.preventDefault();
+    if (!kycFullName || !kycDob || !kycIdNumber || !kycIdFile) {
+      triggerNotification('Please fill in all identity verification fields and upload your ID document.', 'warning', 'Incomplete Form');
+      return;
+    }
+
+    const isDriver = user?.role === 'driver';
+    if (isDriver) {
+      if (!kycLicenseNumber || !kycLicenseExpiry || !kycLicenseFile || !kycVehicleModel || !kycLicensePlate) {
+        triggerNotification('Drivers must provide driving license details and vehicle registration details.', 'warning', 'Incomplete Form');
+        return;
+      }
+    }
+
+    setSubmittingKyc(true);
+
+    try {
+      const vehicleInfoStr = isDriver ? `${kycVehicleModel} (${kycLicensePlate})` : null;
+
+      if (supabase) {
+        const updates = {
+          full_name: kycFullName,
+          is_verified: true,
+          vehicle_info: vehicleInfoStr
+        };
+
+        const { error: profileErr } = await supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', user.id);
+
+        if (profileErr) throw profileErr;
+
+        const { error: authErr } = await supabase.auth.updateUser({
+          data: {
+            full_name: kycFullName,
+            is_verified: true,
+            vehicle_info: vehicleInfoStr
+          }
+        });
+
+        if (authErr) throw authErr;
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        const updated = profiles.map(p => {
+          if (p.id === user.id) {
+            return {
+              ...p,
+              full_name: kycFullName,
+              is_verified: true,
+              vehicle_info: vehicleInfoStr
+            };
+          }
+          return p;
+        });
+        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+      }
+
+      triggerNotification('KYC Verification approved! Your identity has been verified automatically.', 'success', 'Identity Verified');
+      await onVerified();
+      setSubmittingKyc(false);
+    } catch (err) {
+      console.error('Error submitting KYC:', err);
+      triggerNotification(err.message || 'Failed to submit KYC verification.', 'warning', 'KYC Error');
+      setSubmittingKyc(false);
+    }
+  };
+
+  return (
+    <div className="glass-panel rounded-3xl p-6 border border-white/10 flex flex-col gap-6 animate-fade-in">
+      <div>
+        <h2 className="text-lg font-bold text-white uppercase tracking-wider flex items-center gap-2">
+          <UserCheck className="w-5 h-5 text-brand-cyan" /> Identity Verification (KYC)
+        </h2>
+        <p className="text-xs text-brand-text-muted mt-1">
+          To comply with safety guidelines and start sharing rides, please verify your account. Your document details are processed securely and verified instantly.
+        </p>
+      </div>
+
+      <form onSubmit={handleCompleteKYC} className="flex flex-col gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">Full Legal Name</label>
+            <input 
+              type="text" 
+              value={kycFullName}
+              onChange={(e) => setKycFullName(e.target.value)}
+              placeholder="John Doe"
+              className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-white/30 focus:border-brand-cyan focus:outline-none"
+              required
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">Date of Birth</label>
+            <input 
+              type="date" 
+              value={kycDob}
+              onChange={(e) => setKycDob(e.target.value)}
+              className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:border-brand-cyan focus:outline-none"
+              required
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">ID Document Type</label>
+            <select 
+              value={kycIdType}
+              onChange={(e) => setKycIdType(e.target.value)}
+              className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:border-brand-cyan focus:outline-none"
+            >
+              <option value="passport">Passport</option>
+              <option value="license">Driver's License</option>
+              <option value="national_id">National ID Card</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">ID Document Number</label>
+            <input 
+              type="text" 
+              value={kycIdNumber}
+              onChange={(e) => setKycIdNumber(e.target.value)}
+              placeholder="A12345678"
+              className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-white/30 focus:border-brand-cyan focus:outline-none"
+              required
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1.5">Upload Official ID Photo</label>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-semibold hover:bg-white/10 transition-all cursor-pointer">
+              <span>Select ID Image</span>
+              <input 
+                type="file" 
+                accept="image/*"
+                onChange={(e) => handleKycFileChange(e, 'id')}
+                className="hidden" 
+              />
+            </label>
+            <span className="text-xs text-brand-text-muted truncate">
+              {kycIdFileName || 'No file selected (under 2MB)'}
+            </span>
+          </div>
+          {kycIdFile && (
+            <div className="mt-3 relative w-32 h-20 rounded-lg overflow-hidden border border-white/10">
+              <img src={kycIdFile} alt="ID preview" className="object-cover w-full h-full" />
+            </div>
+          )}
+        </div>
+
+        {user?.role === 'driver' && (
+          <div className="border-t border-white/5 pt-5 flex flex-col gap-5 animate-fade-in">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Driver Vetting Details</h3>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">Driving License Number</label>
+                <input 
+                  type="text" 
+                  value={kycLicenseNumber}
+                  onChange={(e) => setKycLicenseNumber(e.target.value)}
+                  placeholder="DL-99887766"
+                  className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-white/30 focus:border-brand-cyan focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">License Expiry Date</label>
+                <input 
+                  type="date" 
+                  value={kycLicenseExpiry}
+                  onChange={(e) => setKycLicenseExpiry(e.target.value)}
+                  className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:border-brand-cyan focus:outline-none"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1.5">Upload Driving License Photo</label>
+              <div className="flex items-center gap-4">
+                <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-xs font-semibold hover:bg-white/10 transition-all cursor-pointer">
+                  <span>Select License Image</span>
+                  <input 
+                    type="file" 
+                    accept="image/*"
+                    onChange={(e) => handleKycFileChange(e, 'license')}
+                    className="hidden" 
+                  />
+                </label>
+                <span className="text-xs text-brand-text-muted truncate">
+                  {kycLicenseFileName || 'No file selected (under 2MB)'}
+                </span>
+              </div>
+              {kycLicenseFile && (
+                <div className="mt-3 relative w-32 h-20 rounded-lg overflow-hidden border border-white/10">
+                  <img src={kycLicenseFile} alt="License preview" className="object-cover w-full h-full" />
+                </div>
+              )}
+            </div>
+
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider border-t border-white/5 pt-5">Vehicle Details</h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">Vehicle Model & Year</label>
+                <input 
+                  type="text" 
+                  value={kycVehicleModel}
+                  onChange={(e) => setKycVehicleModel(e.target.value)}
+                  placeholder="Tesla Model Y (2024)"
+                  className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-white/30 focus:border-brand-cyan focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">License Plate Number</label>
+                <input 
+                  type="text" 
+                  value={kycLicensePlate}
+                  onChange={(e) => setKycLicensePlate(e.target.value)}
+                  placeholder="7XYZ88"
+                  className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-white/30 focus:border-brand-cyan focus:outline-none"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <button 
+          type="submit" 
+          disabled={submittingKyc}
+          className="w-full mt-4 py-3 rounded-xl bg-brand-cyan text-brand-dark font-bold text-sm hover:opacity-90 transition-opacity flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-brand-cyan/10 disabled:opacity-50 btn-glow-cyan"
+        >
+          {submittingKyc ? (
+            <div className="w-5 h-5 rounded-full border-2 border-brand-dark border-t-transparent animate-spin"></div>
+          ) : (
+            <>
+              <Check className="w-4 h-4" /> Submit & Verify Automatically
+            </>
+          )}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function DashboardContent() {
   const searchParams = useSearchParams();
   const { user, role, switchProfile, allProfiles, loading, refreshUser, refreshAllProfiles, logout } = useUser();
@@ -93,6 +384,11 @@ function DashboardContent() {
   const [adminSearchQuery, setAdminSearchQuery] = useState('');
   const [adminRoleFilter, setAdminRoleFilter] = useState('all'); // all | driver | passenger | admin
   const [adminStatusFilter, setAdminStatusFilter] = useState('all'); // all | verified | unverified | banned
+
+  // Ride & Commuter Rating State
+  const [activeRatingItem, setActiveRatingItem] = useState(null); // The completed ride item being rated
+  const [ratingStars, setRatingStars] = useState(5);
+  const [ratingComment, setRatingComment] = useState('');
 
   // Helper to add toast notification
   const triggerNotification = (message, type = 'success', title = 'Notification') => {
@@ -199,6 +495,13 @@ function DashboardContent() {
     if (dest) setDestQuery(dest);
     if (tab) setActiveTab(tab);
   }, [searchParams]);
+
+  // Check for pending ratings on load or user changes
+  useEffect(() => {
+    if (user) {
+      checkForPendingRatings();
+    }
+  }, [user]);
 
   // Load datasets from mock DB
   const loadData = () => {
@@ -558,10 +861,11 @@ function DashboardContent() {
   };
 
   // DRIVER: Complete Ride & Claim Nabogo Subsidy
-  const handleCompleteRide = (trip) => {
+  const handleCompleteRide = async (trip) => {
     const distanceKm = 45;
     const amount = (distanceKm * 0.25).toFixed(2);
     
+    // Create subsidy claim
     const newSubsidy = {
       id: `sub-${Date.now()}`,
       driver_id: user.id,
@@ -572,17 +876,77 @@ function DashboardContent() {
       created_at: new Date().toISOString()
     };
 
-    const updatedSubsidies = [...subsidies, newSubsidy];
-    updateLocalStorage('subsidies', updatedSubsidies);
+    // Find bookings associated with this trip
+    const tripBookings = bookings.filter(b => b.trip_id === trip.id && b.status === 'accepted');
 
-    const updatedTrips = trips.filter(t => t.id !== trip.id);
-    updateLocalStorage('trips', updatedTrips);
-    
+    // Create completed ride records for ratings
+    const completedRecords = tripBookings.map(b => ({
+      id: `comp-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      trip_id: trip.id,
+      driver_id: trip.driver_id,
+      driver_name: trip.driver_name,
+      driver_avatar: trip.driver_avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+      passenger_id: b.passenger_id,
+      passenger_name: b.passenger_name,
+      passenger_avatar: b.passenger_avatar || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80',
+      destination: trip.destination,
+      departure_time: trip.departure_time,
+      rated_by_passenger: false,
+      rated_by_driver: false
+    }));
+
+    if (supabase) {
+      try {
+        const { error: subErr } = await supabase.from('subsidies').insert(newSubsidy);
+        if (subErr) throw subErr;
+
+        if (completedRecords.length > 0) {
+          const { error: compErr } = await supabase.from('completed_rides').insert(completedRecords.map(r => ({
+            trip_id: r.trip_id,
+            driver_id: r.driver_id,
+            driver_name: r.driver_name,
+            driver_avatar: r.driver_avatar,
+            passenger_id: r.passenger_id,
+            passenger_name: r.passenger_name,
+            passenger_avatar: r.passenger_avatar,
+            destination: r.destination,
+            departure_time: r.departure_time,
+            rated_by_passenger: false,
+            rated_by_driver: false
+          })));
+          if (compErr) throw compErr;
+        }
+
+        const { error: tripErr } = await supabase.from('trips').delete().eq('id', trip.id);
+        if (tripErr) throw tripErr;
+
+      } catch (err) {
+        console.error('Error completing live ride:', err);
+        triggerNotification('Failed to complete ride on server.', 'warning', 'Error');
+        return;
+      }
+    } else {
+      const currentSubsidies = [...subsidies, newSubsidy];
+      localStorage.setItem('coride_mock_subsidies', JSON.stringify(currentSubsidies));
+      setSubsidies(currentSubsidies);
+
+      const existingCompleted = JSON.parse(localStorage.getItem('coride_mock_completed_rides') || '[]');
+      const updatedCompleted = [...existingCompleted, ...completedRecords];
+      localStorage.setItem('coride_mock_completed_rides', JSON.stringify(updatedCompleted));
+
+      const updatedTrips = trips.filter(t => t.id !== trip.id);
+      localStorage.setItem('coride_mock_trips', JSON.stringify(updatedTrips));
+      setTrips(updatedTrips);
+    }
+
     triggerNotification(
       `Trip completed! Nabogo subsidy claim of $${amount} submitted for municipal verification.`,
       'success',
       'Subsidy Submitted'
     );
+
+    loadData();
+    checkForPendingRatings();
   };
 
   // ADMIN: Vetting Drivers
@@ -734,6 +1098,161 @@ function DashboardContent() {
     } catch (err) {
       console.error(err);
       triggerNotification(err.message || 'Failed to delete user profile.', 'warning', 'Admin Error');
+    }
+  };
+
+  const checkForPendingRatings = async () => {
+    if (!user) return;
+    
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('completed_rides')
+          .select('*')
+          .or(`passenger_id.eq.${user.id},driver_id.eq.${user.id}`);
+        
+        if (data && !error) {
+          const pending = data.find(r => 
+            (r.passenger_id === user.id && !r.rated_by_passenger) ||
+            (r.driver_id === user.id && !r.rated_by_driver)
+          );
+          if (pending) {
+            setActiveRatingItem(pending);
+            setRatingStars(5);
+            setRatingComment('');
+          } else {
+            setActiveRatingItem(null);
+          }
+        }
+      } catch (e) {
+        console.error('Error checking live ratings:', e);
+      }
+    } else {
+      const completed = JSON.parse(localStorage.getItem('coride_mock_completed_rides') || '[]');
+      const pending = completed.find(r => 
+        (r.passenger_id === user.id && !r.rated_by_passenger) ||
+        (r.driver_id === user.id && !r.rated_by_driver)
+      );
+      if (pending) {
+        setActiveRatingItem(pending);
+        setRatingStars(5);
+        setRatingComment('');
+      } else {
+        setActiveRatingItem(null);
+      }
+    }
+  };
+
+  const handleSkipRating = async () => {
+    if (!activeRatingItem) return;
+    
+    const isPassenger = user.id === activeRatingItem.passenger_id;
+    const updates = isPassenger ? { rated_by_passenger: true } : { rated_by_driver: true };
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('completed_rides')
+          .update(updates)
+          .eq('id', activeRatingItem.id);
+        if (error) throw error;
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      const completed = JSON.parse(localStorage.getItem('coride_mock_completed_rides') || '[]');
+      const updated = completed.map(r => {
+        if (r.id === activeRatingItem.id) {
+          return { ...r, ...updates };
+        }
+        return r;
+      });
+      localStorage.setItem('coride_mock_completed_rides', JSON.stringify(updated));
+    }
+    
+    triggerNotification('Rating skipped.', 'info', 'Feedback');
+    setActiveRatingItem(null);
+    checkForPendingRatings();
+  };
+
+  const handleSubmitRating = async () => {
+    if (!activeRatingItem) return;
+
+    const isPassenger = user.id === activeRatingItem.passenger_id;
+    const targetUserId = isPassenger ? activeRatingItem.driver_id : activeRatingItem.passenger_id;
+    const updates = isPassenger ? { rated_by_passenger: true } : { rated_by_driver: true };
+
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('completed_rides')
+          .update(updates)
+          .eq('id', activeRatingItem.id);
+        if (error) throw error;
+      } else {
+        const completed = JSON.parse(localStorage.getItem('coride_mock_completed_rides') || '[]');
+        const updated = completed.map(r => {
+          if (r.id === activeRatingItem.id) {
+            return { ...r, ...updates };
+          }
+          return r;
+        });
+        localStorage.setItem('coride_mock_completed_rides', JSON.stringify(updated));
+      }
+
+      let targetProfile = null;
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', targetUserId)
+          .maybeSingle();
+        if (data && !error) targetProfile = data;
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        targetProfile = profiles.find(p => p.id === targetUserId);
+      }
+
+      if (targetProfile) {
+        const currentRating = parseFloat(targetProfile.rating || 5.0);
+        const currentCount = parseInt(targetProfile.trips_count || 0);
+        const newCount = currentCount + 1;
+        const newRating = parseFloat(((currentRating * currentCount) + ratingStars) / newCount).toFixed(2);
+
+        if (supabase) {
+          const { error } = await supabase
+            .from('profiles')
+            .update({
+              rating: parseFloat(newRating),
+              trips_count: newCount
+            })
+            .eq('id', targetUserId);
+          if (error) throw error;
+        } else {
+          const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+          const updatedProfiles = profiles.map(p => {
+            if (p.id === targetUserId) {
+              return { ...p, rating: parseFloat(newRating), trips_count: newCount };
+            }
+            return p;
+          });
+          localStorage.setItem('coride_mock_profiles', JSON.stringify(updatedProfiles));
+        }
+
+        triggerNotification(`Thank you! Rating of ${ratingStars} ★ submitted.`, 'success', 'Rating Submitted');
+      }
+
+      await refreshAllProfiles();
+      await refreshUser();
+      loadData();
+      setActiveRatingItem(null);
+      
+      setTimeout(() => {
+        checkForPendingRatings();
+      }, 500);
+    } catch (err) {
+      console.error('Error submitting rating:', err);
+      triggerNotification(err.message || 'Failed to submit rating.', 'warning', 'Rating Error');
     }
   };
 
@@ -1058,6 +1577,18 @@ function DashboardContent() {
 
       {/* CENTER WORKSPACE: WORKFLOW VIEWS */}
       <div className="lg:col-span-9 flex flex-col gap-8">
+        {!user.is_verified ? (
+          <KYCForm 
+            user={user} 
+            triggerNotification={triggerNotification} 
+            onVerified={async () => {
+              await refreshAllProfiles();
+              await refreshUser();
+              loadData();
+            }} 
+          />
+        ) : (
+          <>
         
         {/* PASSENGER DASHBOARD TAB */}
         {activeTab === 'passenger' && (
@@ -1943,8 +2474,87 @@ function DashboardContent() {
 
           </div>
         )}
-
+          </>
+        )}
       </div>
+
+      {/* RATING MODAL OVERLAY */}
+      {activeRatingItem && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
+          <div className="glass-panel max-w-md w-full rounded-2xl p-6 border border-white/10 flex flex-col gap-4 animate-scale-in">
+            <h3 className="text-base font-bold text-white uppercase tracking-wider">
+              {user?.id === activeRatingItem.passenger_id ? 'Rate Your Driver & Ride' : 'Rate Your Passenger'}
+            </h3>
+            
+            <p className="text-xs text-brand-text-muted">
+              {user?.id === activeRatingItem.passenger_id 
+                ? `How was your carpooling commute to ${activeRatingItem.destination} with ${activeRatingItem.driver_name}?`
+                : `How was ${activeRatingItem.passenger_name} as a passenger on your commute to ${activeRatingItem.destination}?`
+              }
+            </p>
+
+            {/* User Info being rated */}
+            <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
+              <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 border border-white/10">
+                <img 
+                  src={user?.id === activeRatingItem.passenger_id ? activeRatingItem.driver_avatar : activeRatingItem.passenger_avatar} 
+                  alt="User avatar" 
+                  className="object-cover w-full h-full" 
+                />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">
+                  {user?.id === activeRatingItem.passenger_id ? activeRatingItem.driver_name : activeRatingItem.passenger_name}
+                </p>
+                <p className="text-[10px] text-brand-text-muted capitalize">
+                  {user?.id === activeRatingItem.passenger_id ? 'Driver' : 'Passenger'}
+                </p>
+              </div>
+            </div>
+
+            {/* Stars Selector */}
+            <div className="flex items-center justify-center gap-2 py-4">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  onClick={() => setRatingStars(star)}
+                  className={`text-2xl transition-transform hover:scale-125 cursor-pointer ${star <= ratingStars ? 'text-brand-cyan text-glow-cyan' : 'text-white/20'}`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+
+            {/* Comment */}
+            <div>
+              <label className="text-[10px] text-brand-text-muted uppercase font-bold block mb-1">Feedback (Optional)</label>
+              <textarea
+                value={ratingComment}
+                onChange={(e) => setRatingComment(e.target.value)}
+                placeholder="Share your experience with the community..."
+                rows={3}
+                className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-white/30 focus:border-brand-cyan focus:outline-none resize-none"
+              />
+            </div>
+
+            {/* Submit Buttons */}
+            <div className="flex gap-3 mt-2">
+              <button
+                onClick={handleSkipRating}
+                className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold text-xs transition-colors cursor-pointer border border-white/5 text-center"
+              >
+                Skip
+              </button>
+              <button
+                onClick={handleSubmitRating}
+                className="flex-1 py-2.5 rounded-xl bg-brand-cyan text-brand-dark font-bold text-xs hover:opacity-90 transition-opacity cursor-pointer text-center btn-glow-cyan"
+              >
+                Submit Rating
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

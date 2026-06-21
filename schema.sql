@@ -162,3 +162,43 @@ $$ language plpgsql security definer;
 create or replace trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+
+-- 6. COMPLETED RIDES TABLE (for ratings and feedback)
+create table public.completed_rides (
+    id uuid default gen_random_uuid() primary key,
+    trip_id uuid not null,
+    driver_id uuid references public.profiles(id) on delete cascade not null,
+    driver_name text not null,
+    driver_avatar text,
+    passenger_id uuid references public.profiles(id) on delete cascade not null,
+    passenger_name text not null,
+    passenger_avatar text,
+    destination text not null,
+    departure_time timestamp with time zone not null,
+    rated_by_passenger boolean default false,
+    rated_by_driver boolean default false,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable Row Level Security (RLS)
+alter table public.completed_rides enable row level security;
+
+create policy "Users can view completed rides they were part of"
+on public.completed_rides for select using (
+  auth.uid() = driver_id or auth.uid() = passenger_id
+);
+
+create policy "Admins can view all completed rides"
+on public.completed_rides for select using (
+  exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+);
+
+create policy "Users can insert completed rides"
+on public.completed_rides for insert with check (
+  auth.uid() = driver_id
+);
+
+create policy "Users can update completed rides they were part of"
+on public.completed_rides for update using (
+  auth.uid() = driver_id or auth.uid() = passenger_id
+);
