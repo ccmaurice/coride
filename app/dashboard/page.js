@@ -32,7 +32,8 @@ import {
   Info,
   Activity,
   Database,
-  RefreshCw
+  RefreshCw,
+  Camera
 } from 'lucide-react';
 
 // Load MapComponent dynamically to prevent SSR errors (Leaflet accesses window object)
@@ -50,7 +51,7 @@ const MapComponent = dynamic(() => import('../../components/MapComponent'), {
 
 function DashboardContent() {
   const searchParams = useSearchParams();
-  const { user, role, switchProfile, allProfiles, loading } = useUser();
+  const { user, role, switchProfile, allProfiles, loading, refreshUser } = useUser();
 
   // State Management
   const [activeTab, setActiveTab] = useState('passenger'); // passenger | driver | admin
@@ -96,6 +97,91 @@ function DashboardContent() {
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4500);
+  };
+
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const handleAvatarUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      triggerNotification('Please select an image smaller than 2MB.', 'warning', 'File Too Large');
+      return;
+    }
+
+    setUploadingAvatar(true);
+
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64String = reader.result;
+
+        if (supabase) {
+          // 1. Live Mode (Supabase)
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .update({ avatar: base64String })
+            .eq('id', user.id);
+
+          if (profileError) throw profileError;
+
+          const { error: authError } = await supabase.auth.updateUser({
+            data: { avatar: base64String }
+          });
+
+          if (authError) throw authError;
+        } else {
+          // 2. Mock Mode (Local Storage)
+          const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+          const updated = profiles.map(p => {
+            if (p.id === user.id) {
+              return { ...p, avatar: base64String };
+            }
+            return p;
+          });
+          localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+
+          // Sync avatar across mock trips
+          const storedTrips = localStorage.getItem('coride_mock_trips');
+          if (storedTrips) {
+            const tripsObj = JSON.parse(storedTrips);
+            const updatedTrips = tripsObj.map(t => {
+              if (t.driver_id === user.id) return { ...t, driver_avatar: base64String };
+              return t;
+            });
+            localStorage.setItem('coride_mock_trips', JSON.stringify(updatedTrips));
+          }
+
+          // Sync avatar across mock bookings
+          const storedBookings = localStorage.getItem('coride_mock_bookings');
+          if (storedBookings) {
+            const bookingsObj = JSON.parse(storedBookings);
+            const updatedBookings = bookingsObj.map(b => {
+              if (b.passenger_id === user.id) return { ...b, passenger_avatar: base64String };
+              return b;
+            });
+            localStorage.setItem('coride_mock_bookings', JSON.stringify(updatedBookings));
+          }
+
+          loadData();
+        }
+
+        await refreshUser();
+        triggerNotification('Your profile picture has been updated successfully.', 'success', 'Avatar Updated');
+        setUploadingAvatar(false);
+      };
+
+      reader.onerror = () => {
+        throw new Error('Failed to read file');
+      };
+
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Error uploading avatar:', err);
+      triggerNotification(err.message || 'Failed to update avatar image.', 'warning', 'Upload Error');
+      setUploadingAvatar(false);
+    }
   };
 
   // Sync Search Query from Home Page URL
@@ -670,9 +756,27 @@ function DashboardContent() {
         {user && (
           <div className="glass-panel rounded-2xl p-5 border border-white/10">
             <div className="flex items-center gap-4 mb-4">
-              <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-brand-cyan">
-                <img src={user.avatar} alt={user.full_name} className="object-cover w-full h-full" />
-              </div>
+              <label className="relative group w-14 h-14 rounded-full overflow-hidden border-2 border-brand-cyan cursor-pointer shrink-0 block">
+                {uploadingAvatar ? (
+                  <div className="w-full h-full bg-brand-dark/80 flex items-center justify-center">
+                    <div className="w-4 h-4 rounded-full border-2 border-brand-cyan border-t-transparent animate-spin"></div>
+                  </div>
+                ) : (
+                  <>
+                    <img src={user.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'} alt={user.full_name} className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-200" />
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+                      <Camera className="w-5 h-5 text-brand-cyan" />
+                    </div>
+                  </>
+                )}
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={handleAvatarUpload}
+                  disabled={uploadingAvatar}
+                />
+              </label>
               <div>
                 <h2 className="font-bold text-white flex items-center gap-1.5">
                   {user.full_name}
