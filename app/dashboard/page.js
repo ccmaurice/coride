@@ -404,11 +404,27 @@ function DashboardContent() {
   const [ratingStars, setRatingStars] = useState(5);
   const [ratingComment, setRatingComment] = useState('');
 
-  // Helper to add toast notification
+  const [notifications, setNotifications] = useState([
+    { id: '1', title: 'System Active', message: 'Smart Commute Matcher and real-time transit telemetry are fully operational.', type: 'success', time: '12:00 AM', read: false },
+    { id: '2', title: 'Vetting Complete', message: 'Municipal safety checks approved. Vetted status granted.', type: 'info', time: '12:05 AM', read: false }
+  ]);
+  const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
+
+  // Helper to add toast notification and append to notification log hub
   const triggerNotification = (message, type = 'success', title = 'Notification') => {
     const id = Date.now() + Math.random().toString(36).substr(2, 4);
     setToasts(prev => [...prev, { id, title, message, type }]);
     
+    const newNotif = {
+      id,
+      title,
+      message,
+      type,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      read: false
+    };
+    setNotifications(prev => [newNotif, ...prev]);
+
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4500);
@@ -1713,6 +1729,18 @@ function DashboardContent() {
                 <p className="text-xs text-white/90 italic mt-0.5">{user.vehicle_info}</p>
               </div>
             )}
+
+            {user.is_verified && (
+              <div className="mt-4 pt-3 border-t border-white/5 flex flex-col gap-2">
+                <p className="text-[10px] uppercase font-bold text-brand-text-muted">Identity Vetting</p>
+                <button
+                  onClick={() => setSelectedKycUser(user)}
+                  className="w-full py-1.5 bg-brand-purple/20 hover:bg-brand-purple/35 text-brand-purple text-[10px] font-bold rounded-xl border border-brand-purple/10 transition-all cursor-pointer text-center"
+                >
+                  View Vetting Details
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -1749,6 +1777,62 @@ function DashboardContent() {
             </button>
           )}
         </div>
+
+        {/* Peer Inbox (Active Chats) */}
+        {user && (
+          <div className="glass-panel rounded-2xl p-5 border border-white/10 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" className="text-brand-cyan"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                Peer Inbox
+              </h3>
+              {bookings.filter(b => (b.passenger_id === user.id || trips.some(t => t.id === b.trip_id && t.driver_id === user.id)) && (b.status === 'accepted' || b.status === 'pending')).length > 0 && (
+                <span className="text-[9px] bg-brand-cyan/15 text-brand-cyan px-2 py-0.5 rounded-full font-bold">
+                  {bookings.filter(b => (b.passenger_id === user.id || trips.some(t => t.id === b.trip_id && t.driver_id === user.id)) && (b.status === 'accepted' || b.status === 'pending')).length} active
+                </span>
+              )}
+            </div>
+
+            {(() => {
+              const activeChats = bookings.filter(b => 
+                (b.passenger_id === user.id || trips.some(t => t.id === b.trip_id && t.driver_id === user.id)) &&
+                (b.status === 'accepted' || b.status === 'pending')
+              );
+
+              if (activeChats.length === 0) {
+                return <p className="text-[10px] text-brand-text-muted italic leading-normal">No active chat sessions. Book a ride to start peer coordination.</p>;
+              }
+
+              return (
+                <div className="flex flex-col gap-2 max-h-[160px] overflow-y-auto pr-1 scrollbar-thin">
+                  {activeChats.map(b => {
+                    const isPassenger = b.passenger_id === user.id;
+                    const trip = trips.find(t => t.id === b.trip_id);
+                    const partnerName = isPassenger ? (trip?.driver_name || 'Driver') : b.passenger_name;
+                    const partnerAvatar = isPassenger ? (trip?.driver_avatar || '') : b.passenger_avatar;
+                    const partnerRole = isPassenger ? 'Driver' : 'Passenger';
+                    
+                    return (
+                      <button
+                        key={b.id}
+                        onClick={() => setActiveChatBooking(b)}
+                        className="w-full text-left p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 flex items-center gap-2 transition-all text-xs text-white"
+                      >
+                        <div className="w-7 h-7 rounded-full overflow-hidden border border-white/10 shrink-0">
+                          <img src={partnerAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'} alt={partnerName} className="object-cover w-full h-full" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold truncate">{partnerName}</p>
+                          <p className="text-[8px] text-brand-text-muted capitalize truncate">{partnerRole} • Click to chat</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* Dynamic Navigation Roles (Tab Selectors) */}
         <div className="flex flex-col gap-2">
@@ -1802,6 +1886,72 @@ function DashboardContent() {
 
       {/* CENTER WORKSPACE: WORKFLOW VIEWS */}
       <div className="lg:col-span-9 flex flex-col gap-8">
+        {/* WELCOME HEADER BAR WITH NOTIFICATION BELL */}
+        <div className="flex justify-between items-center bg-white/5 border border-white/10 rounded-2xl p-4 flex-wrap gap-4 relative">
+          <div>
+            <h1 className="text-lg font-bold text-glow-cyan text-white">Welcome back, {user.full_name}!</h1>
+            <p className="text-xs text-brand-text-muted mt-0.5">Explore commutes, verify peer KYC documents, and coordinate sustainable transit lines.</p>
+          </div>
+
+          {/* Bell Icon & Dropdown Wrapper */}
+          <div className="relative">
+            <button
+              onClick={() => setNotifDropdownOpen(!notifDropdownOpen)}
+              className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition-all text-white flex items-center justify-center relative cursor-pointer"
+            >
+              <Bell className="w-5 h-5 text-brand-cyan" />
+              {notifications.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-brand-cyan text-brand-dark font-extrabold text-[9px] w-5 h-5 rounded-full flex items-center justify-center border-2 border-brand-dark animate-pulse">
+                  {notifications.length}
+                </span>
+              )}
+            </button>
+
+            {notifDropdownOpen && (
+              <div className="absolute right-0 mt-3 w-80 rounded-2xl glass-panel border border-white/10 shadow-2xl p-3 z-50 animate-fade-in flex flex-col gap-2 bg-brand-dark/95">
+                <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                  <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Bell className="w-3.5 h-3.5 text-brand-cyan" /> Notifications Log
+                  </span>
+                  <button
+                    onClick={() => {
+                      setNotifications([]);
+                      setNotifDropdownOpen(false);
+                    }}
+                    className="text-[10px] text-brand-text-muted hover:text-white transition-colors cursor-pointer"
+                  >
+                    Clear All
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2 max-h-[250px] overflow-y-auto pr-1 scrollbar-thin">
+                  {notifications.length === 0 ? (
+                    <p className="text-[10px] text-brand-text-muted italic py-6 text-center">No recent alerts or screen updates.</p>
+                  ) : (
+                    notifications.map(n => (
+                      <div
+                        key={n.id}
+                        className={`p-2 rounded-lg text-[11px] leading-tight border transition-colors ${
+                          n.type === 'success' ? 'bg-brand-emerald/5 border-brand-emerald/10 text-white' :
+                          n.type === 'warning' ? 'bg-amber-500/5 border-amber-500/10 text-white' :
+                          n.type === 'info' ? 'bg-brand-cyan/5 border-brand-cyan/10 text-white' :
+                          'bg-white/5 border-white/5 text-white'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <span className="font-bold text-white">{n.title}</span>
+                          <span className="text-[8px] text-brand-text-muted shrink-0">{n.time}</span>
+                        </div>
+                        <p className="text-[10px] text-brand-text-muted mt-1 leading-normal">{n.message}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {!user.is_verified ? (
           <KYCForm 
             user={user} 
