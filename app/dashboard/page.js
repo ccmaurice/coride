@@ -533,18 +533,80 @@ function DashboardContent() {
     }
   }, [user]);
 
-  // Load datasets from mock DB
-  const loadData = () => {
+  // Load datasets from Supabase or mock DB
+  const loadData = async () => {
     if (typeof window === 'undefined') return;
-    const storedTrips = localStorage.getItem('coride_mock_trips');
-    const storedBookings = localStorage.getItem('coride_mock_bookings');
-    const storedSubsidies = localStorage.getItem('coride_mock_subsidies');
-    const storedRewards = localStorage.getItem('coride_mock_campus_rewards');
+    
+    if (supabase) {
+      try {
+        const { data: dbTrips, error: tripsErr } = await supabase
+          .from('trips')
+          .select('*')
+          .order('departure_time', { ascending: true });
+          
+        const { data: dbBookings, error: bookingsErr } = await supabase
+          .from('bookings')
+          .select('*')
+          .order('created_at', { ascending: false });
+          
+        const { data: dbSubsidies, error: subsidiesErr } = await supabase
+          .from('subsidies')
+          .select('*')
+          .order('created_at', { ascending: false });
+          
+        let dbRewards = { points: 0, reserved_spot: null };
+        if (user) {
+          const { data: rewardsData, error: rewardsErr } = await supabase
+            .from('campus_rewards')
+            .select('*')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          if (rewardsData && !rewardsErr) {
+            dbRewards = rewardsData;
+          }
+        }
+        
+        if (dbTrips && !tripsErr) {
+          const populatedTrips = dbTrips.map(t => {
+            const driver = allProfiles.find(p => p.id === t.driver_id);
+            return {
+              ...t,
+              driver_name: driver?.full_name || 'Driver',
+              driver_avatar: driver?.avatar || '',
+              driver_rating: driver?.rating || 5.0
+            };
+          });
+          setTrips(populatedTrips);
+        }
+        
+        if (dbBookings && !bookingsErr) {
+          const populatedBookings = dbBookings.map(b => {
+            const passenger = allProfiles.find(p => p.id === b.passenger_id);
+            return {
+              ...b,
+              passenger_name: passenger?.full_name || 'Passenger',
+              passenger_avatar: passenger?.avatar || ''
+            };
+          });
+          setBookings(populatedBookings);
+        }
+        
+        if (dbSubsidies && !subsidiesErr) setSubsidies(dbSubsidies);
+        setCampusRewards(dbRewards);
+      } catch (err) {
+        console.error('Error loading Supabase data:', err);
+      }
+    } else {
+      const storedTrips = localStorage.getItem('coride_mock_trips');
+      const storedBookings = localStorage.getItem('coride_mock_bookings');
+      const storedSubsidies = localStorage.getItem('coride_mock_subsidies');
+      const storedRewards = localStorage.getItem('coride_mock_campus_rewards');
 
-    if (storedTrips) setTrips(JSON.parse(storedTrips));
-    if (storedBookings) setBookings(JSON.parse(storedBookings));
-    if (storedSubsidies) setSubsidies(JSON.parse(storedSubsidies));
-    if (storedRewards) setCampusRewards(JSON.parse(storedRewards));
+      if (storedTrips) setTrips(JSON.parse(storedTrips));
+      if (storedBookings) setBookings(JSON.parse(storedBookings));
+      if (storedSubsidies) setSubsidies(JSON.parse(storedSubsidies));
+      if (storedRewards) setCampusRewards(JSON.parse(storedRewards));
+    }
   };
 
   // Sync local data across tabs / switch events
@@ -879,7 +941,7 @@ function DashboardContent() {
   };
 
   // PASSENGER: Request Booking
-  const handleBookTrip = (tripId) => {
+  const handleBookTrip = async (tripId) => {
     if (!user) {
       triggerNotification('Please sign in to book a ride.', 'warning', 'Authentication Needed');
       return;
@@ -891,45 +953,64 @@ function DashboardContent() {
       return;
     }
 
-    const newBooking = {
-      id: `book-${Date.now()}`,
-      trip_id: tripId,
-      passenger_id: user.id,
-      passenger_name: user.full_name,
-      passenger_avatar: user.avatar,
-      status: 'pending',
-      created_at: new Date().toISOString()
-    };
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('bookings')
+          .insert([{
+            trip_id: tripId,
+            passenger_id: user.id,
+            status: 'pending'
+          }]);
+        if (error) throw error;
+        
+        triggerNotification('Booking request submitted. The driver has been alerted!', 'success', 'Request Sent');
+        await loadData();
+      } else {
+        const newBooking = {
+          id: `book-${Date.now()}`,
+          trip_id: tripId,
+          passenger_id: user.id,
+          passenger_name: user.full_name,
+          passenger_avatar: user.avatar,
+          status: 'pending',
+          created_at: new Date().toISOString()
+        };
 
-    const updated = [...bookings, newBooking];
-    updateLocalStorage('bookings', updated);
-    
-    triggerNotification('Booking request submitted. The driver has been alerted!', 'success', 'Request Sent');
+        const updated = [...bookings, newBooking];
+        updateLocalStorage('bookings', updated);
+        
+        triggerNotification('Booking request submitted. The driver has been alerted!', 'success', 'Request Sent');
 
-    // MOCK REAL-TIME RESPONSE AFTER 5 SECONDS:
-    // Simulated Driver auto-accepts passenger to demonstrate tracking notification!
-    setTimeout(() => {
-      const targetTrip = trips.find(t => t.id === tripId);
-      triggerNotification(
-        `Driver ${targetTrip?.driver_name || 'Alex Mercer'} accepted your booking for ${targetTrip?.destination || 'Stanford'}. Real-time tracking is now available!`,
-        'success',
-        'Booking Accepted 🚗'
-      );
-      
-      const freshBookings = JSON.parse(localStorage.getItem('coride_mock_bookings') || '[]');
-      const finalBookings = freshBookings.map(b => {
-        if (b.trip_id === tripId && b.passenger_id === user.id) {
-          if (targetTrip && targetTrip.seats_available > 0) {
-            targetTrip.seats_available -= 1;
-            localStorage.setItem('coride_mock_trips', JSON.stringify(trips));
-          }
-          return { ...b, status: 'accepted' };
-        }
-        return b;
-      });
-      localStorage.setItem('coride_mock_bookings', JSON.stringify(finalBookings));
-      loadData();
-    }, 5000);
+        // MOCK REAL-TIME RESPONSE AFTER 5 SECONDS:
+        // Simulated Driver auto-accepts passenger to demonstrate tracking notification!
+        setTimeout(() => {
+          const targetTrip = trips.find(t => t.id === tripId);
+          triggerNotification(
+            `Driver ${targetTrip?.driver_name || 'Alex Mercer'} accepted your booking for ${targetTrip?.destination || 'Stanford'}. Real-time tracking is now available!`,
+            'success',
+            'Booking Accepted 🚗'
+          );
+          
+          const freshBookings = JSON.parse(localStorage.getItem('coride_mock_bookings') || '[]');
+          const finalBookings = freshBookings.map(b => {
+            if (b.trip_id === tripId && b.passenger_id === user.id) {
+              if (targetTrip && targetTrip.seats_available > 0) {
+                targetTrip.seats_available -= 1;
+                localStorage.setItem('coride_mock_trips', JSON.stringify(trips));
+              }
+              return { ...b, status: 'accepted' };
+            }
+            return b;
+          });
+          localStorage.setItem('coride_mock_bookings', JSON.stringify(finalBookings));
+          loadData();
+        }, 5000);
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to request booking.', 'warning', 'Booking Error');
+    }
   };
 
   // PASSENGER / DRIVER: Cancel Booking (releases seats)
@@ -1017,7 +1098,7 @@ function DashboardContent() {
   };
 
   // DRIVER: Post new trip
-  const handlePostTrip = (e) => {
+  const handlePostTrip = async (e) => {
     e.preventDefault();
     if (!postOrigin || !postDestination || !postTime) {
       triggerNotification('Please specify the route start, destination, and departure time.', 'warning', 'Invalid Input');
@@ -1033,67 +1114,149 @@ function DashboardContent() {
       [37.4275, -122.1697]
     ];
 
-    const newTrip = {
-      id: `trip-${Date.now()}`,
-      driver_id: user.id,
-      driver_name: user.full_name,
-      driver_avatar: user.avatar,
-      driver_rating: user.rating,
-      origin: postOrigin,
-      destination: postDestination,
-      departure_time: new Date(postTime).toISOString(),
-      seats_available: parseInt(postSeats),
-      seats_total: parseInt(postSeats),
-      price: parseFloat(postPrice),
-      preferences: {
-        pets: postPets,
-        smoking: postSmoking,
-        music: postMusic,
-        conversation: postConversation
-      },
-      route_coordinates: routeCoords
+    const preferences = {
+      pets: postPets,
+      smoking: postSmoking,
+      music: postMusic,
+      conversation: postConversation
     };
 
-    const updatedTrips = [...trips, newTrip];
-    updateLocalStorage('trips', updatedTrips);
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('trips')
+          .insert([{
+            driver_id: user.id,
+            origin: postOrigin,
+            destination: postDestination,
+            departure_time: new Date(postTime).toISOString(),
+            seats_available: parseInt(postSeats),
+            seats_total: parseInt(postSeats),
+            price: parseFloat(postPrice),
+            preferences,
+            route_coordinates: routeCoords
+          }]);
+        if (error) throw error;
+        
+        triggerNotification('Your commute route has been published to the community feed!', 'success', 'Trip Posted');
+        
+        setPostOrigin('');
+        setPostDestination('');
+        setPostTime('');
+        await loadData();
+      } else {
+        const newTrip = {
+          id: `trip-${Date.now()}`,
+          driver_id: user.id,
+          driver_name: user.full_name,
+          driver_avatar: user.avatar,
+          driver_rating: user.rating,
+          origin: postOrigin,
+          destination: postDestination,
+          departure_time: new Date(postTime).toISOString(),
+          seats_available: parseInt(postSeats),
+          seats_total: parseInt(postSeats),
+          price: parseFloat(postPrice),
+          preferences,
+          route_coordinates: routeCoords
+        };
 
-    setPostOrigin('');
-    setPostDestination('');
-    setPostTime('');
-    
-    triggerNotification('Your commute route has been published to the community feed!', 'success', 'Trip Posted');
+        const updatedTrips = [...trips, newTrip];
+        updateLocalStorage('trips', updatedTrips);
+
+        setPostOrigin('');
+        setPostDestination('');
+        setPostTime('');
+        
+        triggerNotification('Your commute route has been published to the community feed!', 'success', 'Trip Posted');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to publish route.', 'warning', 'Error');
+    }
   };
 
   // DRIVER: Manage Bookings (Accept/Reject)
-  const handleUpdateBookingStatus = (bookingId, newStatus) => {
-    const updatedBookings = bookings.map(b => {
-      if (b.id === bookingId) {
+  const handleUpdateBookingStatus = async (bookingId, newStatus) => {
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('bookings')
+          .update({ status: newStatus })
+          .eq('id', bookingId);
+        if (error) throw error;
+
         if (newStatus === 'accepted') {
           const booking = bookings.find(x => x.id === bookingId);
           const targetTrip = trips.find(t => t.id === booking.trip_id);
           if (targetTrip && targetTrip.seats_available > 0) {
-            targetTrip.seats_available -= 1;
-            updateLocalStorage('trips', trips);
+            const { error: seatErr } = await supabase
+              .from('trips')
+              .update({ seats_available: targetTrip.seats_available - 1 })
+              .eq('id', targetTrip.id);
+            if (seatErr) throw seatErr;
+
+            const { data: rewards, error: rewardsErr } = await supabase
+              .from('campus_rewards')
+              .select('*')
+              .eq('user_id', user.id)
+              .maybeSingle();
             
-            const updatedRewards = {
-              ...campusRewards,
-              points: campusRewards.points + 25
-            };
-            updateLocalStorage('campus_rewards', updatedRewards);
+            const currentPoints = rewards?.points || 0;
+            const newPoints = currentPoints + 25;
+            
+            if (rewards) {
+              await supabase
+                .from('campus_rewards')
+                .update({ points: newPoints, updated_at: new Date().toISOString() })
+                .eq('user_id', user.id);
+            } else {
+              await supabase
+                .from('campus_rewards')
+                .insert([{ user_id: user.id, points: newPoints }]);
+            }
             triggerNotification('You earned 25 campus priority points for carpooling with a peer!', 'success', 'Campus Priority Points');
           }
         }
-        return { ...b, status: newStatus };
+        triggerNotification(
+          `Passenger booking request has been ${newStatus}.`, 
+          newStatus === 'accepted' ? 'success' : 'warning', 
+          `Booking ${newStatus === 'accepted' ? 'Accepted' : 'Declined'}`
+        );
+        await loadData();
+      } else {
+        const updatedBookings = bookings.map(b => {
+          if (b.id === bookingId) {
+            if (newStatus === 'accepted') {
+              const booking = bookings.find(x => x.id === bookingId);
+              const targetTrip = trips.find(t => t.id === booking.trip_id);
+              if (targetTrip && targetTrip.seats_available > 0) {
+                targetTrip.seats_available -= 1;
+                updateLocalStorage('trips', trips);
+                
+                const updatedRewards = {
+                  ...campusRewards,
+                  points: campusRewards.points + 25
+                };
+                updateLocalStorage('campus_rewards', updatedRewards);
+                triggerNotification('You earned 25 campus priority points for carpooling with a peer!', 'success', 'Campus Priority Points');
+              }
+            }
+            return { ...b, status: newStatus };
+          }
+          return b;
+        });
+        updateLocalStorage('bookings', updatedBookings);
+        triggerNotification(
+          `Passenger booking request has been ${newStatus}.`, 
+          newStatus === 'accepted' ? 'success' : 'warning', 
+          `Booking ${newStatus === 'accepted' ? 'Accepted' : 'Declined'}`
+        );
       }
-      return b;
-    });
-    updateLocalStorage('bookings', updatedBookings);
-    
-    triggerNotification(
-      `Passenger booking request has been ${newStatus}.`, 
-      newStatus === 'accepted' ? 'success' : 'warning', 
-      `Booking ${newStatus === 'accepted' ? 'Accepted' : 'Declined'}`
-    );
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to update booking status.', 'warning', 'Error');
+    }
   };
 
   // DRIVER: Complete Ride & Claim Nabogo Subsidy
@@ -1215,14 +1378,27 @@ function DashboardContent() {
   };
 
   // ADMIN: Approve Subsidies
-  const handleApproveSubsidy = (subsidyId) => {
-    const updated = subsidies.map(s => {
-      if (s.id === subsidyId) return { ...s, status: 'approved' };
-      return s;
-    });
-    updateLocalStorage('subsidies', updated);
-    
-    triggerNotification('Subsidy audit approved. Municipal funds disbursed!', 'success', 'Subsidy Audited');
+  const handleApproveSubsidy = async (subsidyId) => {
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('subsidies')
+          .update({ status: 'approved' })
+          .eq('id', subsidyId);
+        if (error) throw error;
+        await loadData();
+      } else {
+        const updated = subsidies.map(s => {
+          if (s.id === subsidyId) return { ...s, status: 'approved' };
+          return s;
+        });
+        updateLocalStorage('subsidies', updated);
+      }
+      triggerNotification('Subsidy audit approved. Municipal funds disbursed!', 'success', 'Subsidy Audited');
+    } catch (err) {
+      console.error(err);
+      triggerNotification(err.message || 'Failed to approve subsidy claim.', 'warning', 'Admin Error');
+    }
   };
 
   // ADMIN ACTIONS: Toggle Verification
@@ -1766,10 +1942,29 @@ function DashboardContent() {
           
           {campusRewards.points >= 50 && !campusRewards.reserved_spot && (
             <button
-              onClick={() => {
-                const updated = { points: campusRewards.points - 50, reserved_spot: 'Lot A - Spot #08' };
-                updateLocalStorage('campus_rewards', updated);
-                triggerNotification('Reserved parking pass Lot A - Spot #08 successfully claimed!', 'success', 'Campus Integration');
+              onClick={async () => {
+                if (supabase) {
+                  try {
+                    const { error } = await supabase
+                      .from('campus_rewards')
+                      .update({
+                        points: campusRewards.points - 50,
+                        reserved_spot: 'Lot A - Spot #08',
+                        updated_at: new Date().toISOString()
+                      })
+                      .eq('user_id', user.id);
+                    if (error) throw error;
+                    await loadData();
+                    triggerNotification('Reserved parking pass Lot A - Spot #08 successfully claimed!', 'success', 'Campus Integration');
+                  } catch (e) {
+                    console.error(e);
+                    triggerNotification('Failed to claim spot in database.', 'warning', 'Error');
+                  }
+                } else {
+                  const updated = { points: campusRewards.points - 50, reserved_spot: 'Lot A - Spot #08' };
+                  updateLocalStorage('campus_rewards', updated);
+                  triggerNotification('Reserved parking pass Lot A - Spot #08 successfully claimed!', 'success', 'Campus Integration');
+                }
               }}
               className="w-full mt-3 py-2 rounded-xl bg-brand-purple text-brand-dark text-xs font-bold hover:opacity-90 transition-opacity cursor-pointer animate-pulse"
             >
@@ -1882,6 +2077,75 @@ function DashboardContent() {
           )}
         </div>
 
+        {/* Development Sandbox Swapper */}
+        {user && user.role === 'admin' && (
+          <div className="glass-panel rounded-2xl p-5 border border-white/10 bg-brand-cyan/5 mt-4">
+            <span className="text-[10px] text-brand-cyan uppercase font-extrabold tracking-wider block mb-2 flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-brand-cyan animate-pulse"></span>
+              Role Sandbox Swapper
+            </span>
+            <p className="text-[10px] text-brand-text-muted leading-tight mb-3">
+              Quickly swap active profiles to test different dashboards and view roles.
+            </p>
+            <div className="flex flex-col gap-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    switchProfile('usr-2'); // Sarah (Passenger)
+                    triggerNotification('Swapped session to Sarah Connor (Passenger)', 'info', 'Role Sandbox');
+                  }}
+                  className={`py-1.5 rounded-xl border text-[10px] font-bold transition-all cursor-pointer ${
+                    user?.id === 'usr-2'
+                      ? 'bg-brand-cyan/15 border-brand-cyan text-brand-cyan'
+                      : 'bg-white/5 border-white/5 text-brand-text-muted hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  Passenger
+                </button>
+                <button
+                  onClick={() => {
+                    switchProfile('usr-1'); // Alex (Driver)
+                    triggerNotification('Swapped session to Alex Mercer (Driver)', 'info', 'Role Sandbox');
+                  }}
+                  className={`py-1.5 rounded-xl border text-[10px] font-bold transition-all cursor-pointer ${
+                    user?.id === 'usr-1'
+                      ? 'bg-brand-emerald/15 border-brand-emerald text-brand-emerald'
+                      : 'bg-white/5 border-white/5 text-brand-text-muted hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  Driver
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  switchProfile('usr-3'); // Marcus (Unverified Driver)
+                  triggerNotification('Swapped session to Marcus Vance (Unverified Driver)', 'info', 'Role Sandbox');
+                }}
+                className={`w-full py-1.5 rounded-xl border text-[10px] font-bold transition-all cursor-pointer ${
+                  user?.id === 'usr-3'
+                    ? 'bg-yellow-500/15 border-yellow-500 text-yellow-500'
+                    : 'bg-white/5 border-white/5 text-brand-text-muted hover:text-white hover:bg-white/10'
+                }`}
+              >
+                Unverified Driver (Marcus)
+              </button>
+              <button
+                onClick={() => {
+                  switchProfile('usr-admin'); // System Admin
+                  triggerNotification('Swapped session to System Admin', 'info', 'Role Sandbox');
+                }}
+                className={`w-full py-1.5 rounded-xl border text-[10px] font-bold transition-all cursor-pointer ${
+                  user?.id === 'usr-admin'
+                    ? 'bg-brand-purple/15 border-brand-purple text-brand-purple'
+                    : 'bg-white/5 border-white/5 text-brand-text-muted hover:text-white hover:bg-white/10'
+                }`}
+              >
+                System Admin (Superadmin)
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
 
       {/* CENTER WORKSPACE: WORKFLOW VIEWS */}
@@ -1952,7 +2216,7 @@ function DashboardContent() {
           </div>
         </div>
 
-        {!user.is_verified ? (
+        {!user.is_verified && user.role !== 'admin' ? (
           <KYCForm 
             user={user} 
             triggerNotification={triggerNotification} 
@@ -2490,6 +2754,29 @@ function DashboardContent() {
 
             {/* Right sidebar: Driver stats & Subsidies */}
             <div className="lg:col-span-5 flex flex-col gap-6">
+
+              {/* Driver Satellite Transit Map */}
+              <div className="glass-panel rounded-2xl p-5 border border-white/10 flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
+                    <Map className="w-4 h-4 text-brand-emerald" /> Route Visualizer
+                  </h2>
+                </div>
+
+                <div className="w-full h-[240px] rounded-xl overflow-hidden relative border border-white/5 mb-4">
+                  <MapComponent 
+                    routeCoordinates={activeRouteCoordinates} 
+                    animateCar={false}
+                    onRouteSelected={(coords) => {
+                      setActiveRouteCoordinates(coords);
+                    }}
+                  />
+                </div>
+
+                <p className="text-[10px] text-brand-text-muted leading-relaxed">
+                  Select a commute route from **Your Posted Rides** to visualize the coordinates on the map.
+                </p>
+              </div>
               
               {/* Nabogo Subsidy Dashboard */}
               <div className="glass-panel rounded-2xl p-5 border border-white/10 bg-brand-cyan/5">
@@ -2563,6 +2850,15 @@ function DashboardContent() {
                         <div className="flex items-center justify-between border-t border-white/5 pt-2 mt-1">
                           <span className="text-[10px] text-brand-text-muted">{trip.seats_available}/{trip.seats_total} seats available</span>
                           <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                setActiveRouteCoordinates(trip.route_coordinates);
+                                triggerNotification(`Viewing route to ${trip.destination} on map.`, 'info', 'Route Selected');
+                              }}
+                              className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-white text-[10px] font-bold border border-white/10 transition-all cursor-pointer"
+                            >
+                              View Route
+                            </button>
                             <button
                               onClick={() => handleCancelTrip(trip.id)}
                               className="px-3 py-1 rounded bg-red-500/15 hover:bg-red-500/30 text-red-400 hover:text-red-300 text-[10px] font-bold transition-all cursor-pointer"
