@@ -14,7 +14,8 @@ import {
   CheckCircle2, 
   AlertCircle,
   Clock,
-  Lock
+  Lock,
+  X
 } from 'lucide-react';
 
 export default function AuthPage() {
@@ -30,6 +31,25 @@ export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('passenger'); // passenger | driver
   const [vehicleInfo, setVehicleInfo] = useState('');
+  const [avatar, setAvatar] = useState('');
+  const [avatarFileName, setAvatarFileName] = useState('');
+  
+  const handleAvatarChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      setErrorMsg('Please select an image smaller than 2MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setAvatar(reader.result);
+      setAvatarFileName(file.name);
+    };
+    reader.readAsDataURL(file);
+  };
   
   // UX states
   const [errorMsg, setErrorMsg] = useState('');
@@ -88,7 +108,7 @@ export default function AuthPage() {
       setSuccessMsg('');
       setSubmitting(true);
       
-      await signup(email, password, fullName, role, role === 'driver' ? vehicleInfo : null);
+      await signup(email, password, fullName, role, role === 'driver' ? vehicleInfo : null, avatar || null);
       
       setSuccessMsg('Account registered successfully! Redirecting...');
       setTimeout(() => {
@@ -142,6 +162,8 @@ export default function AuthPage() {
                 setErrorMsg('');
                 setSuccessMsg('');
                 setPassword('');
+                setAvatar('');
+                setAvatarFileName('');
               }}
               className={`py-3.5 text-xs font-bold transition-all relative ${
                 activeTab === 'signin' 
@@ -157,6 +179,8 @@ export default function AuthPage() {
                 setErrorMsg('');
                 setSuccessMsg('');
                 setPassword('');
+                setAvatar('');
+                setAvatarFileName('');
               }}
               className={`py-3.5 text-xs font-bold transition-all relative ${
                 activeTab === 'signup' 
@@ -277,6 +301,47 @@ export default function AuthPage() {
                       minLength={6}
                       className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/5 text-white text-xs placeholder-brand-text-muted focus:outline-none focus:border-brand-cyan focus:ring-1 focus:ring-brand-cyan transition-all"
                     />
+                  </div>
+                </div>
+
+                {/* Profile Picture Upload */}
+                <div className="flex flex-col gap-1.5 animate-slide-in">
+                  <label className="text-[10px] uppercase font-bold text-brand-text-muted">Profile Picture (Optional)</label>
+                  <div className="flex items-center gap-4 p-3 rounded-2xl bg-white/[0.02] border border-white/5">
+                    <div className="relative shrink-0 w-12 h-12 rounded-full overflow-hidden border border-white/10 bg-white/5 flex items-center justify-center">
+                      {avatar ? (
+                        <img src={avatar} alt="Profile preview" className="w-full h-full object-cover" />
+                      ) : (
+                        <User className="w-6 h-6 text-brand-text-muted/60" />
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="inline-flex items-center justify-center px-3.5 py-1.5 rounded-xl bg-brand-cyan/10 hover:bg-brand-cyan/20 border border-brand-cyan/20 text-brand-cyan text-xs font-semibold transition-all cursor-pointer">
+                        <span>Upload Photo</span>
+                        <input 
+                          type="file" 
+                          accept="image/*"
+                          onChange={handleAvatarChange}
+                          className="hidden" 
+                        />
+                      </label>
+                      <span className="text-[9px] text-brand-text-muted truncate max-w-[180px]">
+                        {avatarFileName || 'JPEG or PNG, max 2MB'}
+                      </span>
+                    </div>
+                    {avatar && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAvatar('');
+                          setAvatarFileName('');
+                        }}
+                        className="ml-auto p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 hover:text-red-400 text-brand-text-muted transition-all cursor-pointer flex items-center justify-center"
+                        title="Remove photo"
+                      >
+                        <X className="w-4.5 h-4.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
