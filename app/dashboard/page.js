@@ -7,6 +7,7 @@ import { useSearchParams } from 'next/navigation';
 import { useUser } from '../../lib/UserContext';
 import { calculateMatchScore } from '../../lib/matching';
 import { supabase } from '../../lib/supabase';
+import { geocodeLocation, getDrivingRoute } from '../../lib/navigation';
 import { 
   Search, 
   MapPin, 
@@ -1116,40 +1117,58 @@ function DashboardContent() {
       return;
     }
 
-    const latOffset = (Math.random() - 0.5) * 0.02;
-    const lngOffset = (Math.random() - 0.5) * 0.02;
-    const routeCoords = [
-      [-4.3032, 15.3120], // Gombe
-      [-4.3486 + latOffset, 15.3194 + lngOffset], // Limete
-      [-4.3942 + latOffset, 15.3188 + lngOffset], // Lemba
-      [-4.4172, 15.3124]  // UNIKIN
-    ];
-
-    const preferences = {
-      pets: postPets,
-      smoking: postSmoking,
-      music: postMusic,
-      conversation: postConversation
-    };
+    triggerNotification('Geocoding route & calculating optimal road path...', 'info', 'Geocoding');
 
     try {
+      // 1. Geocode Start and Destination
+      const originRes = await geocodeLocation(postOrigin);
+      const destRes = await geocodeLocation(postDestination);
+
+      if (!originRes || !destRes) {
+        triggerNotification('Could not resolve locations. Standard route used as a fallback.', 'warning', 'Fallback Used');
+      }
+
+      const originCoords = originRes ? [originRes.lat, originRes.lng] : [-4.3032, 15.3120];
+      const destCoords = destRes ? [destRes.lat, destRes.lng] : [-4.4172, 15.3124];
+
+      // 2. Calculate optimal road routing via OSRM
+      const routeData = await getDrivingRoute(originCoords, destCoords);
+      if (!routeData) {
+        throw new Error('Failed to generate driving directions.');
+      }
+
+      const routeCoords = routeData.coordinates;
+      const distanceKm = routeData.distanceKm;
+      const durationMins = routeData.durationMins;
+
+      // Automatically calculate recommended split price and fuel subsidy
+      const finalPrice = parseFloat(postPrice) || parseFloat((distanceKm * 0.12).toFixed(2)) || 2.00;
+      const subsidyAmount = parseFloat((distanceKm * 0.25).toFixed(2));
+
+      const preferences = {
+        pets: postPets,
+        smoking: postSmoking,
+        music: postMusic,
+        conversation: postConversation
+      };
+
       if (supabase) {
         const { error } = await supabase
           .from('trips')
           .insert([{
             driver_id: user.id,
-            origin: postOrigin,
-            destination: postDestination,
+            origin: originRes ? originRes.name : postOrigin,
+            destination: destRes ? destRes.name : postDestination,
             departure_time: new Date(postTime).toISOString(),
             seats_available: parseInt(postSeats),
             seats_total: parseInt(postSeats),
-            price: parseFloat(postPrice),
+            price: finalPrice,
             preferences,
             route_coordinates: routeCoords
           }]);
         if (error) throw error;
         
-        triggerNotification('Your commute route has been published to the community feed!', 'success', 'Trip Posted');
+        triggerNotification(`Published commute: ${originRes ? originRes.name : postOrigin} to ${destRes ? destRes.name : postDestination} (${distanceKm} km, ~${durationMins} mins) is live!`, 'success', 'Trip Posted');
         
         setPostOrigin('');
         setPostDestination('');
@@ -1162,12 +1181,12 @@ function DashboardContent() {
           driver_name: user.full_name,
           driver_avatar: user.avatar,
           driver_rating: user.rating,
-          origin: postOrigin,
-          destination: postDestination,
+          origin: originRes ? originRes.name : postOrigin,
+          destination: destRes ? destRes.name : postDestination,
           departure_time: new Date(postTime).toISOString(),
           seats_available: parseInt(postSeats),
           seats_total: parseInt(postSeats),
-          price: parseFloat(postPrice),
+          price: finalPrice,
           preferences,
           route_coordinates: routeCoords
         };
@@ -1179,11 +1198,43 @@ function DashboardContent() {
         setPostDestination('');
         setPostTime('');
         
-        triggerNotification('Your commute route has been published to the community feed!', 'success', 'Trip Posted');
+        triggerNotification(`Published commute: ${newTrip.origin} to ${newTrip.destination} (${distanceKm} km, ~${durationMins} mins) is live!`, 'success', 'Trip Posted');
       }
     } catch (err) {
       console.error(err);
       triggerNotification(err.message || 'Failed to publish route.', 'warning', 'Error');
+    }
+  };
+
+  const handlePreviewRoute = async (e) => {
+    if (e) e.preventDefault();
+    if (!postOrigin || !postDestination) {
+      triggerNotification('Please enter both a start point and destination to preview the route.', 'warning', 'Preview Error');
+      return;
+    }
+
+    triggerNotification('Fetching real driving route preview...', 'info', 'Geocoding');
+
+    try {
+      const originRes = await geocodeLocation(postOrigin);
+      const destRes = await geocodeLocation(postDestination);
+
+      if (!originRes || !destRes) {
+        triggerNotification('Could not find locations. Try using more common names in Kinshasa.', 'warning', 'Geocoding Failed');
+        return;
+      }
+
+      const routeData = await getDrivingRoute([originRes.lat, originRes.lng], [destRes.lat, destRes.lng]);
+      if (routeData) {
+        setActiveRouteCoordinates(routeData.coordinates);
+        setTrackingActive(false);
+        triggerNotification(`Previewing road route: ${originRes.name} to ${destRes.name} (${routeData.distanceKm} km, ~${routeData.durationMins} mins)`, 'success', 'Route Plotted');
+      } else {
+        triggerNotification('Could not calculate driving directions.', 'warning', 'Routing Failed');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification('Error generating route preview.', 'warning', 'Error');
     }
   };
 
@@ -2469,6 +2520,73 @@ function DashboardContent() {
                       </select>
                     </div>
                   </div>
+
+                  {/* Real-time geocoding search route map preview */}
+                  <div className="border-t border-white/5 pt-4 mt-3 flex justify-between items-center flex-wrap gap-2">
+                    <button
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        if (!originQuery && !destQuery) {
+                          triggerNotification('Please enter an origin or destination in the search fields to plot on the map.', 'warning', 'Search Empty');
+                          return;
+                        }
+                        triggerNotification('Finding locations on map...', 'info', 'Geocoding');
+                        try {
+                          let originCoords = null;
+                          let destCoords = null;
+                          let originName = '';
+                          let destName = '';
+
+                          if (originQuery) {
+                            const res = await geocodeLocation(originQuery);
+                            if (res) {
+                              originCoords = [res.lat, res.lng];
+                              originName = res.name;
+                            }
+                          }
+
+                          if (destQuery) {
+                            const res = await geocodeLocation(destQuery);
+                            if (res) {
+                              destCoords = [res.lat, res.lng];
+                              destName = res.name;
+                            }
+                          }
+
+                          if (originCoords && destCoords) {
+                            const routeData = await getDrivingRoute(originCoords, destCoords);
+                            if (routeData) {
+                              setActiveRouteCoordinates(routeData.coordinates);
+                              setTrackingActive(false);
+                              triggerNotification(`Showing route: ${originName} to ${destName} (${routeData.distanceKm} km)`, 'success', 'Route Found');
+                            } else {
+                              triggerNotification('Could not calculate a road route between these points.', 'warning', 'Routing Error');
+                            }
+                          } else if (originCoords) {
+                            setActiveRouteCoordinates([originCoords]);
+                            setTrackingActive(false);
+                            triggerNotification(`Showing location: ${originName}`, 'success', 'Location Found');
+                          } else if (destCoords) {
+                            setActiveRouteCoordinates([destCoords]);
+                            setTrackingActive(false);
+                            triggerNotification(`Showing location: ${destName}`, 'success', 'Location Found');
+                          } else {
+                            triggerNotification('Could not resolve these locations in Kinshasa.', 'warning', 'No Results');
+                          }
+                        } catch (err) {
+                          console.error(err);
+                          triggerNotification('Error searching locations.', 'warning', 'Error');
+                        }
+                      }}
+                      className="px-4 py-2 rounded-xl bg-brand-cyan/10 hover:bg-brand-cyan/25 border border-brand-cyan/20 text-brand-cyan text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-brand-cyan/5"
+                    >
+                      <Map className="w-4 h-4 text-brand-cyan" /> Show Search Route on Map
+                    </button>
+                    <span className="text-[10px] text-brand-text-muted">
+                      100% free driving directions
+                    </span>
+                  </div>
+
                 </div>
               </div>
 
@@ -2753,12 +2871,21 @@ function DashboardContent() {
                     </div>
                   </div>
 
-                  <button 
-                    type="submit" 
-                    className="w-full mt-4 py-3 rounded-xl bg-brand-emerald text-brand-dark font-semibold text-sm hover:opacity-90 transition-opacity flex items-center justify-center gap-2 cursor-pointer shadow-lg"
-                  >
-                    <Plus className="w-4 h-4" /> Post Commute Route
-                  </button>
+                  <div className="flex flex-col sm:flex-row gap-3 mt-4">
+                    <button 
+                      type="button" 
+                      onClick={handlePreviewRoute}
+                      className="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                    >
+                      <Map className="w-4 h-4 text-brand-cyan" /> Preview Route
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="flex-1 py-3 rounded-xl bg-brand-emerald text-brand-dark font-semibold text-sm hover:opacity-90 transition-opacity flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                    >
+                      <Plus className="w-4 h-4" /> Publish Route
+                    </button>
+                  </div>
                 </form>
               </div>
 
