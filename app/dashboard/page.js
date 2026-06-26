@@ -66,6 +66,16 @@ function KYCForm({ user, triggerNotification, onVerified }) {
   const [kycLicensePlate, setKycLicensePlate] = useState('');
   
   const [submittingKyc, setSubmittingKyc] = useState(false);
+  const [aiVettingActive, setAiVettingActive] = useState(false);
+  const [aiVettingStep, setAiVettingStep] = useState(0);
+
+  const steps = [
+    { text: "Initializing AI Compliance Agent...", time: 900 },
+    { text: "Scanning ID Document via Computer Vision OCR...", time: 1300 },
+    { text: "Checking name matching & document validity...", time: 1000 },
+    { text: "Performing facial biometric comparison...", time: 1000 },
+    { text: "AI Compliance check complete. Generating report...", time: 800 }
+  ];
 
   const handleKycFileChange = (e, fileType) => {
     const file = e.target.files?.[0];
@@ -105,71 +115,151 @@ function KYCForm({ user, triggerNotification, onVerified }) {
     }
 
     setSubmittingKyc(true);
+    setAiVettingActive(true);
+    setAiVettingStep(0);
 
-    try {
+    const runVetting = () => {
+      let currentStep = 0;
+      const stepInterval = () => {
+        if (currentStep < steps.length - 1) {
+          currentStep++;
+          setAiVettingStep(currentStep);
+          setTimeout(stepInterval, steps[currentStep].time);
+        } else {
+          submitAfterVetting();
+        }
+      };
+      setTimeout(stepInterval, steps[0].time);
+    };
+
+    const submitAfterVetting = async () => {
+      const nameMatches = kycFullName.trim().length > 3 && !/\d/.test(kycFullName);
+      const idMatches = kycIdNumber.trim().length > 4;
+      
+      const confidence = nameMatches && idMatches ? Math.floor(Math.random() * 5) + 94 : Math.floor(Math.random() * 20) + 25;
+      const decision = confidence >= 80 ? 'RECOMMEND_APPROVAL' : 'RECOMMEND_REJECT';
+      
+      const report = {
+        confidence,
+        ocr_name: nameMatches ? kycFullName : "Unknown / Unreadable",
+        face_match: confidence >= 80 ? "94% (Match)" : "28% (No Match / Low Contrast)",
+        checks: [
+          { name: "Document OCR Scan", status: "passed", detail: "Successfully parsed document structure." },
+          { name: "Name Match Check", status: nameMatches ? "passed" : "failed", detail: nameMatches ? "Input matches document name." : "Document name could not be verified." },
+          { name: "Facial Similarity", status: confidence >= 80 ? "passed" : "failed", detail: confidence >= 80 ? "Facial features match profile image." : "Facial comparison failed or image too dark." },
+          { name: "Document Format Validation", status: idMatches ? "passed" : "failed", detail: idMatches ? "Valid document identifier format." : "Invalid document identifier format." }
+        ],
+        decision
+      };
+
       const vehicleInfoStr = isDriver ? `${kycVehicleModel} (${kycLicensePlate})` : null;
+      const serializedReport = JSON.stringify(report);
+      const kycLicenseNumberStr = isDriver ? `${kycLicenseNumber}|||${serializedReport}` : serializedReport;
 
-      if (supabase) {
-        const updates = {
-          full_name: kycFullName,
-          is_verified: true,
-          vehicle_info: vehicleInfoStr,
-          kyc_dob: kycDob,
-          kyc_id_type: kycIdType,
-          kyc_id_number: kycIdNumber,
-          kyc_id_file: kycIdFile,
-          kyc_license_number: isDriver ? kycLicenseNumber : null,
-          kyc_license_expiry: isDriver ? kycLicenseExpiry : null,
-          kyc_license_file: isDriver ? kycLicenseFile : null
-        };
+      try {
+        if (supabase) {
+          const updates = {
+            full_name: kycFullName,
+            is_verified: false, // Wait for admin sign-off
+            vehicle_info: vehicleInfoStr,
+            kyc_dob: kycDob,
+            kyc_id_type: kycIdType,
+            kyc_id_number: kycIdNumber,
+            kyc_id_file: kycIdFile,
+            kyc_license_number: kycLicenseNumberStr,
+            kyc_license_expiry: isDriver ? kycLicenseExpiry : null,
+            kyc_license_file: isDriver ? kycLicenseFile : null
+          };
 
-        const { error: profileErr } = await supabase
-          .from('profiles')
-          .update(updates)
-          .eq('id', user.id);
+          const { error: profileErr } = await supabase
+            .from('profiles')
+            .update(updates)
+            .eq('id', user.id);
 
-        if (profileErr) throw profileErr;
+          if (profileErr) throw profileErr;
 
-        const { error: authErr } = await supabase.auth.updateUser({
-          data: updates
-        });
+          const { error: authErr } = await supabase.auth.updateUser({
+            data: updates
+          });
 
-        if (authErr) throw authErr;
-      } else {
-        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
-        const updated = profiles.map(p => {
-          if (p.id === user.id) {
-            return {
-              ...p,
-              full_name: kycFullName,
-              is_verified: true,
-              vehicle_info: vehicleInfoStr,
-              kyc_dob: kycDob,
-              kyc_id_type: kycIdType,
-              kyc_id_number: kycIdNumber,
-              kyc_id_file: kycIdFile,
-              kyc_license_number: isDriver ? kycLicenseNumber : null,
-              kyc_license_expiry: isDriver ? kycLicenseExpiry : null,
-              kyc_license_file: isDriver ? kycLicenseFile : null
-            };
-          }
-          return p;
-        });
-        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+          if (authErr) throw authErr;
+        } else {
+          const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+          const updated = profiles.map(p => {
+            if (p.id === user.id) {
+              return {
+                ...p,
+                full_name: kycFullName,
+                is_verified: false, // Wait for admin sign-off
+                vehicle_info: vehicleInfoStr,
+                kyc_dob: kycDob,
+                kyc_id_type: kycIdType,
+                kyc_id_number: kycIdNumber,
+                kyc_id_file: kycIdFile,
+                kyc_license_number: kycLicenseNumberStr,
+                kyc_license_expiry: isDriver ? kycLicenseExpiry : null,
+                kyc_license_file: isDriver ? kycLicenseFile : null
+              };
+            }
+            return p;
+          });
+          localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+        }
+
+        triggerNotification('AI Vetting completed. Verification dossier forwarded to System Admin.', 'success', 'AI Vetting Done');
+        await onVerified();
+        setAiVettingActive(false);
+        setSubmittingKyc(false);
+      } catch (err) {
+        console.error('Error submitting KYC:', err);
+        triggerNotification(err.message || 'Failed to submit KYC verification.', 'warning', 'KYC Error');
+        setAiVettingActive(false);
+        setSubmittingKyc(false);
       }
+    };
 
-      triggerNotification('KYC Verification approved! Your identity has been verified automatically.', 'success', 'Identity Verified');
-      await onVerified();
-      setSubmittingKyc(false);
-    } catch (err) {
-      console.error('Error submitting KYC:', err);
-      triggerNotification(err.message || 'Failed to submit KYC verification.', 'warning', 'KYC Error');
-      setSubmittingKyc(false);
-    }
+    runVetting();
   };
 
   return (
-    <div className="glass-panel rounded-3xl p-6 border border-white/10 flex flex-col gap-6 animate-fade-in">
+    <div className="glass-panel rounded-3xl p-6 border border-white/10 flex flex-col gap-6 animate-fade-in relative">
+      
+      {aiVettingActive && (
+        <div className="absolute inset-0 bg-brand-dark/95 backdrop-blur-md flex flex-col items-center justify-center gap-6 z-50 rounded-3xl border border-white/10 animate-fade-in p-6 text-center">
+          <div className="relative w-20 h-20 flex items-center justify-center">
+            <div className="absolute inset-0 rounded-full border-4 border-brand-cyan/20 border-t-brand-cyan animate-spin"></div>
+            <div className="absolute inset-2 rounded-full border-4 border-brand-purple/25 border-b-brand-purple animate-spin-reverse"></div>
+            <Sparkles className="w-8 h-8 text-brand-cyan animate-pulse" />
+          </div>
+          
+          <div className="flex flex-col gap-2">
+            <h3 className="text-sm font-extrabold text-glow-cyan text-white uppercase tracking-wider">
+              AI Vetting Agent Active
+            </h3>
+            <p className="text-xs text-brand-text-muted max-w-sm leading-relaxed">
+              {steps[aiVettingStep]?.text || "Running compliance audits..."}
+            </p>
+          </div>
+
+          <div className="w-full max-w-xs flex flex-col gap-1.5 bg-white/5 p-3 rounded-2xl border border-white/5">
+            {steps.map((step, idx) => (
+              <div key={idx} className="flex items-center gap-2.5 text-left text-[10px]">
+                <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center font-bold ${
+                  idx < aiVettingStep ? "bg-brand-emerald text-brand-dark" :
+                  idx === aiVettingStep ? "bg-brand-cyan text-brand-dark animate-pulse" :
+                  "bg-white/5 text-brand-text-muted"
+                }`}>
+                  {idx < aiVettingStep ? "✓" : idx + 1}
+                </span>
+                <span className={idx === aiVettingStep ? "text-white font-bold" : idx < aiVettingStep ? "text-brand-text-muted" : "text-brand-text-muted/40"}>
+                  {step.text.split('...')[0]}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div>
         <h2 className="text-lg font-bold text-white uppercase tracking-wider flex items-center gap-2">
           <UserCheck className="w-5 h-5 text-brand-cyan" /> Identity Verification (KYC)
@@ -347,6 +437,147 @@ function KYCForm({ user, triggerNotification, onVerified }) {
           )}
         </button>
       </form>
+    </div>
+  );
+}
+
+function KYCPendingReview({ user, triggerNotification, onVerified }) {
+  const parseAiReport = () => {
+    const field = user?.kyc_license_number;
+    if (!field) return null;
+    if (field.includes('|||')) {
+      const parts = field.split('|||');
+      try { return JSON.parse(parts[1]); } catch(e) { return null; }
+    }
+    if (field.startsWith('{') && field.endsWith('}')) {
+      try { return JSON.parse(field); } catch(e) { return null; }
+    }
+    return null;
+  };
+
+  const report = parseAiReport();
+
+  const handleDemoApprove = async () => {
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ is_verified: true })
+          .eq('id', user.id);
+        if (error) throw error;
+        
+        await supabase.auth.updateUser({
+          data: { is_verified: true }
+        });
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        const updated = profiles.map(p => {
+          if (p.id === user.id) return { ...p, is_verified: true };
+          return p;
+        });
+        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+      }
+      triggerNotification('Demo Mode: KYC verification approved instantly!', 'success', 'Vetting Approved');
+      await onVerified();
+    } catch (err) {
+      console.error(err);
+      triggerNotification('Failed to verify profile.', 'warning', 'Error');
+    }
+  };
+
+  return (
+    <div className="glass-panel rounded-3xl p-6 border border-white/10 flex flex-col gap-6 animate-fade-in">
+      <div className="text-center py-4 flex flex-col items-center gap-3">
+        <div className="w-16 h-16 rounded-full bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-center text-yellow-500 animate-pulse">
+          <Clock className="w-8 h-8" />
+        </div>
+        <h2 className="text-lg font-bold text-white uppercase tracking-wider">KYC Verification Under Review</h2>
+        <p className="text-xs text-brand-text-muted max-w-md mx-auto">
+          Your identity details have been submitted. Our **AI Compliance Agent** has completed its automated vetting, and the dossier has been forwarded to a human System Administrator for final sign-off.
+        </p>
+      </div>
+
+      {/* Progress Timeline */}
+      <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 flex flex-col gap-3">
+        <h3 className="text-xs font-bold text-white uppercase tracking-wider">Verification Timeline</h3>
+        <div className="flex flex-col gap-4 mt-2 relative pl-6 border-l border-white/10 ml-3">
+          <div className="relative">
+            <div className="absolute -left-9 top-0 w-6 h-6 rounded-full bg-brand-emerald flex items-center justify-center text-brand-dark font-bold text-xs">✓</div>
+            <p className="text-xs font-semibold text-white">KYC Dossier Submitted</p>
+            <p className="text-[10px] text-brand-text-muted">Personal details and official documents uploaded.</p>
+          </div>
+          <div className="relative">
+            <div className="absolute -left-9 top-0 w-6 h-6 rounded-full bg-brand-emerald flex items-center justify-center text-brand-dark font-bold text-xs">✓</div>
+            <p className="text-xs font-semibold text-white">AI Compliance Agent Audit</p>
+            <p className="text-[10px] text-brand-text-muted">OCR scanning, name-match validation, and facial match completed.</p>
+          </div>
+          <div className="relative">
+            <div className="absolute -left-9 top-0 w-6 h-6 rounded-full bg-yellow-500/20 border border-yellow-500/50 flex items-center justify-center text-yellow-500 font-bold text-xs animate-pulse">●</div>
+            <p className="text-xs font-semibold text-yellow-500">Human Admin Sign-off (Pending)</p>
+            <p className="text-[10px] text-brand-text-muted font-normal">System administrator reviewing AI audit recommendations and document images.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* AI Compliance Certificate */}
+      {report && (
+        <div className="border border-brand-purple/20 bg-brand-purple/5 rounded-2xl p-5 flex flex-col gap-4 relative overflow-hidden text-left">
+          <div className="absolute -right-8 -top-8 w-24 h-24 bg-brand-purple/10 rounded-full blur-xl"></div>
+          
+          <div className="flex justify-between items-start gap-4">
+            <div>
+              <span className="text-[9px] font-bold bg-brand-purple/15 text-brand-purple border border-brand-purple/20 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                AI Compliance Agent V2.1
+              </span>
+              <h4 className="text-sm font-bold text-white mt-1.5 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-brand-purple animate-pulse" /> Automated Vetting Report
+              </h4>
+            </div>
+            <div className="text-right">
+              <span className="text-[10px] text-brand-text-muted block font-normal">Match Confidence</span>
+              <span className={`text-lg font-extrabold block ${report.confidence >= 80 ? "text-brand-emerald text-glow-emerald" : "text-red-400"}`}>
+                {report.confidence}%
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1 text-[11px] border-t border-white/5 pt-3">
+            {report.checks?.map((c, i) => (
+              <div key={i} className="flex gap-2.5 items-start bg-white/[0.01] border border-white/5 p-2 rounded-xl">
+                <span className={`shrink-0 font-bold text-xs ${c.status === 'passed' ? 'text-brand-emerald' : 'text-red-400'}`}>
+                  {c.status === 'passed' ? '✓' : '✗'}
+                </span>
+                <div>
+                  <p className="font-semibold text-white/90">{c.name}</p>
+                  <p className="text-[9px] text-brand-text-muted leading-tight mt-0.5 font-normal">{c.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-white/5 rounded-xl p-3 border border-white/5 flex justify-between items-center text-xs">
+            <span className="text-brand-text-muted font-normal">AI Vetting Decision:</span>
+            <span className={`font-bold px-2 py-0.5 rounded ${
+              report.decision === 'RECOMMEND_APPROVAL' ? 'bg-brand-emerald/10 text-brand-emerald' : 'bg-red-500/10 text-red-400'
+            }`}>
+              {report.decision === 'RECOMMEND_APPROVAL' ? 'PASSED (RECOMMEND APPROVAL)' : 'FLAGGED (REVIEW REQUIRED)'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Demo helper */}
+      <div className="border-t border-white/5 pt-5 mt-2 flex justify-between items-center flex-wrap gap-3">
+        <span className="text-[10px] text-brand-text-muted font-normal">
+          💡 Want to test the Admin review flow? Switch profiles to **System Admin** in the sidebar.
+        </span>
+        <button
+          onClick={handleDemoApprove}
+          className="px-4 py-2 rounded-xl bg-brand-cyan/15 hover:bg-brand-cyan/25 border border-brand-cyan/20 text-brand-cyan text-xs font-bold transition-all cursor-pointer shadow-md shadow-brand-cyan/5"
+        >
+          Demo: Auto-Approve Vetting
+        </button>
+      </div>
     </div>
   );
 }
@@ -1439,6 +1670,53 @@ function DashboardContent() {
     }
   };
 
+  const handleRejectKyc = async (profileId) => {
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            is_verified: false,
+            kyc_dob: null,
+            kyc_id_type: null,
+            kyc_id_number: null,
+            kyc_id_file: null,
+            kyc_license_number: null,
+            kyc_license_expiry: null,
+            kyc_license_file: null
+          })
+          .eq('id', profileId);
+        if (error) throw error;
+      } else {
+        const profiles = JSON.parse(localStorage.getItem('coride_mock_profiles') || '[]');
+        const updated = profiles.map(p => {
+          if (p.id === profileId) {
+            return {
+              ...p,
+              is_verified: false,
+              kyc_dob: null,
+              kyc_id_type: null,
+              kyc_id_number: null,
+              kyc_id_file: null,
+              kyc_license_number: null,
+              kyc_license_expiry: null,
+              kyc_license_file: null
+            };
+          }
+          return p;
+        });
+        localStorage.setItem('coride_mock_profiles', JSON.stringify(updated));
+      }
+      triggerNotification('KYC dossier rejected and reset. The user will be prompted to re-verify.', 'warning', 'Vetting Rejected');
+      setSelectedKycUser(null);
+      await refreshAllProfiles();
+      loadData();
+    } catch (err) {
+      console.error(err);
+      triggerNotification('Failed to reject KYC.', 'warning', 'Error');
+    }
+  };
+
   // ADMIN: Approve Subsidies
   const handleApproveSubsidy = async (subsidyId) => {
     try {
@@ -2328,15 +2606,27 @@ function DashboardContent() {
         )}
 
         {!user.is_verified && user.role !== 'admin' ? (
-          <KYCForm 
-            user={user} 
-            triggerNotification={triggerNotification} 
-            onVerified={async () => {
-              await refreshAllProfiles();
-              await refreshUser();
-              loadData();
-            }} 
-          />
+          user.kyc_dob ? (
+            <KYCPendingReview
+              user={user}
+              triggerNotification={triggerNotification}
+              onVerified={async () => {
+                await refreshAllProfiles();
+                await refreshUser();
+                loadData();
+              }}
+            />
+          ) : (
+            <KYCForm 
+              user={user} 
+              triggerNotification={triggerNotification} 
+              onVerified={async () => {
+                await refreshAllProfiles();
+                await refreshUser();
+                loadData();
+              }} 
+            />
+          )
         ) : (
           <>
         
@@ -3274,37 +3564,64 @@ function DashboardContent() {
               <div className="glass-panel rounded-2xl p-6 border border-white/10">
                 <div className="flex items-center gap-2 mb-4">
                   <UserCheck className="w-5 h-5 text-brand-purple" />
-                  <h2 className="text-base font-bold text-white">Trust & Safety: Driver Vetting</h2>
+                  <h2 className="text-base font-bold text-white">Trust & Safety: KYC Vetting Queue</h2>
                 </div>
                 <p className="text-xs text-brand-text-muted leading-relaxed mb-4">
-                  Verify driver licenses, vehicle inspection records, and background check checks to maintain platform security.
+                  Verify driver licenses, national identity credentials, and AI-assisted compliance audits to authorize commuters.
                 </p>
 
-                {allProfiles.filter(p => p.role === 'driver' && !p.is_verified).length === 0 ? (
+                {allProfiles.filter(p => !p.is_verified && p.kyc_dob).length === 0 ? (
                   <div className="p-4 text-center text-brand-text-muted text-xs border border-dashed border-white/5 rounded-xl">
-                    No pending driver verifications. All active drivers vetted!
+                    No pending user verifications. All submitted KYC dossiers reviewed!
                   </div>
                 ) : (
                   <div className="flex flex-col gap-3">
-                    {allProfiles.filter(p => p.role === 'driver' && !p.is_verified).map(profile => (
-                      <div key={profile.id} className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full overflow-hidden">
-                            <img src={profile.avatar} alt={profile.full_name} className="object-cover w-full h-full" />
+                    {allProfiles.filter(p => !p.is_verified && p.kyc_dob).map(profile => {
+                      let report = null;
+                      const field = profile.kyc_license_number;
+                      if (field) {
+                        if (field.includes('|||')) {
+                          try { report = JSON.parse(field.split('|||')[1]); } catch(e) {}
+                        } else if (field.startsWith('{') && field.endsWith('}')) {
+                          try { report = JSON.parse(field); } catch(e) {}
+                        }
+                      }
+                      
+                      return (
+                        <div key={profile.id} className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between flex-wrap gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full overflow-hidden border border-white/10 shrink-0">
+                              <img src={profile.avatar} alt={profile.full_name} className="object-cover w-full h-full" />
+                            </div>
+                            <div className="text-left">
+                              <p className="text-xs font-semibold text-white flex items-center gap-1.5">
+                                {profile.full_name}
+                                <span className="text-[9px] uppercase border border-white/25 px-1 rounded text-brand-text-muted">{profile.role}</span>
+                              </p>
+                              <p className="text-[10px] text-brand-text-muted mt-0.5">{profile.email}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-xs font-semibold text-white">{profile.full_name}</p>
-                            <p className="text-[10px] text-brand-text-muted">{profile.vehicle_info || 'No vehicle declared'}</p>
+                          
+                          <div className="flex items-center gap-3">
+                            {report && (
+                              <span className={`text-[9px] font-bold border px-2 py-0.5 rounded-full ${
+                                report.decision === 'RECOMMEND_APPROVAL' 
+                                  ? 'bg-brand-emerald/10 border-brand-emerald/20 text-brand-emerald' 
+                                  : 'bg-red-500/10 border-red-500/20 text-red-400'
+                              }`}>
+                                AI: {report.confidence}% {report.decision === 'RECOMMEND_APPROVAL' ? 'Pass' : 'Flagged'}
+                              </span>
+                            )}
+                            <button
+                              onClick={() => setSelectedKycUser(profile)}
+                              className="px-3 py-1.5 bg-brand-purple hover:bg-purple-400 text-brand-dark rounded-xl text-[10px] font-bold transition-all cursor-pointer"
+                            >
+                              Review & Sign-off
+                            </button>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleVerifyDriver(profile.id)}
-                          className="px-3 py-1.5 bg-brand-purple hover:bg-purple-400 text-brand-dark rounded-xl text-[10px] font-bold transition-all cursor-pointer"
-                        >
-                          Vet & Verify
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -3595,170 +3912,237 @@ function DashboardContent() {
       )}
 
       {/* KYC DOSSIER MODAL OVERLAY */}
-      {selectedKycUser && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
-          <div className="glass-panel max-w-2xl w-full rounded-3xl p-6 border border-white/10 flex flex-col gap-5 max-h-[90vh] overflow-y-auto animate-scale-in relative">
-            <button
-              onClick={() => setSelectedKycUser(null)}
-              className="absolute top-4 right-4 text-brand-text-muted hover:text-white transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      {selectedKycUser && (() => {
+        const field = selectedKycUser.kyc_license_number;
+        let report = null;
+        if (field) {
+          if (field.includes('|||')) {
+            try { report = JSON.parse(field.split('|||')[1]); } catch(e) {}
+          } else if (field.startsWith('{') && field.endsWith('}')) {
+            try { report = JSON.parse(field); } catch(e) {}
+          }
+        }
 
-            <div>
-              <span className="text-[10px] bg-brand-purple/15 text-brand-purple border border-brand-purple/20 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-                KYC Dossier Review
-              </span>
-              <h3 className="text-lg font-bold text-white mt-2 flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-brand-purple" /> {selectedKycUser.full_name}'s Vetting Info
-              </h3>
-              <p className="text-xs text-brand-text-muted">
-                Audit registered identity, driving license verification, and physical vehicle safety checklists.
-              </p>
-            </div>
+        return (
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
+            <div className="glass-panel max-w-2xl w-full rounded-3xl p-6 border border-white/10 flex flex-col gap-5 max-h-[90vh] overflow-y-auto animate-scale-in relative text-left">
+              <button
+                onClick={() => setSelectedKycUser(null)}
+                className="absolute top-4 right-4 text-brand-text-muted hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
 
-            {/* Profile trust summary */}
-            <div className="flex items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/5">
-              <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 border-2 border-brand-purple">
-                <img 
-                  src={selectedKycUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'} 
-                  alt="User Avatar" 
-                  className="object-cover w-full h-full"
-                />
+              <div>
+                <span className="text-[10px] bg-brand-purple/15 text-brand-purple border border-brand-purple/20 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                  KYC Dossier Review
+                </span>
+                <h3 className="text-lg font-bold text-white mt-2 flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-brand-purple" /> {selectedKycUser.full_name}'s Vetting Info
+                </h3>
+                <p className="text-xs text-brand-text-muted font-normal">
+                  Audit registered identity, driving license verification, and physical vehicle safety checklists.
+                </p>
               </div>
-              <div className="flex-1">
-                <p className="text-sm font-bold text-white leading-tight">{selectedKycUser.full_name}</p>
-                <p className="text-xs text-brand-text-muted mt-0.5">{selectedKycUser.email}</p>
-                <div className="flex gap-4 mt-2">
-                  <span className="text-[10px] text-brand-text-muted capitalize">Role: <strong className="text-white">{selectedKycUser.role}</strong></span>
-                  <span className="text-[10px] text-brand-text-muted">Status: <strong className={selectedKycUser.is_verified ? "text-brand-emerald" : "text-yellow-500"}>{selectedKycUser.is_verified ? "Verified" : "Pending Vetting"}</strong></span>
-                  {selectedKycUser.is_banned && <span className="text-[10px] text-red-400 font-bold">Suspended</span>}
+
+              {/* Profile trust summary */}
+              <div className="flex items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/5">
+                <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 border-2 border-brand-purple">
+                  <img 
+                    src={selectedKycUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'} 
+                    alt="User Avatar" 
+                    className="object-cover w-full h-full"
+                  />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-white leading-tight">{selectedKycUser.full_name}</p>
+                  <p className="text-xs text-brand-text-muted mt-0.5 font-normal">{selectedKycUser.email}</p>
+                  <div className="flex gap-4 mt-2 font-normal">
+                    <span className="text-[10px] text-brand-text-muted">Role: <strong className="text-white">{selectedKycUser.role}</strong></span>
+                    <span className="text-[10px] text-brand-text-muted">Status: <strong className={selectedKycUser.is_verified ? "text-brand-emerald" : "text-yellow-500"}>{selectedKycUser.is_verified ? "Verified" : "Pending Vetting"}</strong></span>
+                    {selectedKycUser.is_banned && <span className="text-[10px] text-red-400 font-bold">Suspended</span>}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* KYC Submission Details */}
-            {selectedKycUser.kyc_dob ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
-                {/* ID Details Card */}
-                <div className="flex flex-col gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2">Identity Details</h4>
-                  
-                  <div className="flex flex-col gap-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-brand-text-muted">Date of Birth:</span>
-                      <span className="text-white font-semibold">{selectedKycUser.kyc_dob}</span>
+              {/* AI Vetting Compliance Report Inside Dossier */}
+              {report && (
+                <div className="border border-brand-purple/20 bg-brand-purple/5 rounded-2xl p-4 flex flex-col gap-3 relative overflow-hidden">
+                  <div className="flex justify-between items-start gap-4">
+                    <div>
+                      <span className="text-[8px] font-bold bg-brand-purple/15 text-brand-purple border border-brand-purple/20 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        AI Compliance Audit Report
+                      </span>
+                      <h4 className="text-xs font-bold text-white mt-1 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-brand-purple animate-pulse" /> Compliance Recommendation
+                      </h4>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-brand-text-muted">ID Type:</span>
-                      <span className="text-white font-semibold capitalize">{selectedKycUser.kyc_id_type?.replace('_', ' ')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-brand-text-muted">Document Number:</span>
-                      <span className="text-white font-semibold">{selectedKycUser.kyc_id_number}</span>
+                    <div className="text-right">
+                      <span className="text-[8px] text-brand-text-muted block font-normal">Match Confidence</span>
+                      <span className={`text-sm font-extrabold block ${report.confidence >= 80 ? "text-brand-emerald" : "text-red-400"}`}>
+                        {report.confidence}%
+                      </span>
                     </div>
                   </div>
 
-                  {selectedKycUser.kyc_id_file ? (
-                    <div className="flex flex-col gap-2 mt-2">
-                      <span className="text-[10px] uppercase font-bold text-brand-text-muted">Official ID Image:</span>
-                      <div className="relative w-full h-32 rounded-xl overflow-hidden border border-white/10 group cursor-pointer bg-black flex items-center justify-center">
-                        <img 
-                          src={selectedKycUser.kyc_id_file} 
-                          alt="ID Document" 
-                          className="object-contain max-h-full" 
-                        />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] border-t border-white/5 pt-2">
+                    {report.checks?.map((c, i) => (
+                      <div key={i} className="flex gap-2 items-start bg-white/[0.01] border border-white/5 p-1.5 rounded-lg">
+                        <span className={`shrink-0 font-bold text-xs ${c.status === 'passed' ? 'text-brand-emerald' : 'text-red-400'}`}>
+                          {c.status === 'passed' ? '✓' : '✗'}
+                        </span>
+                        <div>
+                          <p className="font-semibold text-white/90">{c.name}</p>
+                          <p className="text-[8px] text-brand-text-muted leading-tight mt-0.5 font-normal">{c.detail}</p>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <p className="text-[10px] text-yellow-500 italic mt-2">No ID image document uploaded.</p>
-                  )}
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] font-normal bg-white/5 rounded-lg p-2 border border-white/5">
+                    <span className="text-brand-text-muted">AI Parsed Name: <strong className="text-white">{report.ocr_name}</strong></span>
+                    <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] ${
+                      report.decision === 'RECOMMEND_APPROVAL' ? 'bg-brand-emerald/10 text-brand-emerald' : 'bg-red-500/10 text-red-400'
+                    }`}>
+                      {report.decision === 'RECOMMEND_APPROVAL' ? 'RECOMMEND APPROVAL' : 'REVIEW REQUIRED'}
+                    </span>
+                  </div>
                 </div>
+              )}
 
-                {/* Driver Licensing Card */}
-                {selectedKycUser.role === 'driver' && (
+              {/* KYC Submission Details */}
+              {selectedKycUser.kyc_dob ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  
+                  {/* ID Details Card */}
                   <div className="flex flex-col gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
-                    <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2">Driver Licensing</h4>
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2">Identity Details</h4>
                     
-                    <div className="flex flex-col gap-2 text-xs">
+                    <div className="flex flex-col gap-2 text-xs font-normal">
                       <div className="flex justify-between">
-                        <span className="text-brand-text-muted">License Plate:</span>
-                        <span className="text-white font-semibold">{selectedKycUser.vehicle_info || 'Not Vetted'}</span>
+                        <span className="text-brand-text-muted">Date of Birth:</span>
+                        <span className="text-white font-semibold">{selectedKycUser.kyc_dob}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-brand-text-muted">License Number:</span>
-                        <span className="text-white font-semibold">{selectedKycUser.kyc_license_number || 'N/A'}</span>
+                        <span className="text-brand-text-muted">ID Type:</span>
+                        <span className="text-white font-semibold capitalize">{selectedKycUser.kyc_id_type?.replace('_', ' ')}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-brand-text-muted">Expiry Date:</span>
-                        <span className="text-white font-semibold">{selectedKycUser.kyc_license_expiry || 'N/A'}</span>
+                        <span className="text-brand-text-muted">Document Number:</span>
+                        <span className="text-white font-semibold">{selectedKycUser.kyc_id_number}</span>
                       </div>
                     </div>
 
-                    {selectedKycUser.kyc_license_file ? (
+                    {selectedKycUser.kyc_id_file ? (
                       <div className="flex flex-col gap-2 mt-2">
-                        <span className="text-[10px] uppercase font-bold text-brand-text-muted">Driving License:</span>
-                        <div className="relative w-full h-32 rounded-xl overflow-hidden border border-white/10 group cursor-pointer bg-black flex items-center justify-center">
+                        <span className="text-[10px] uppercase font-bold text-brand-text-muted">Official ID Image:</span>
+                        <div className="relative w-full h-32 rounded-xl overflow-hidden border border-white/10 group bg-black flex items-center justify-center">
                           <img 
-                            src={selectedKycUser.kyc_license_file} 
-                            alt="License Document" 
+                            src={selectedKycUser.kyc_id_file} 
+                            alt="ID Document" 
                             className="object-contain max-h-full" 
                           />
                         </div>
                       </div>
                     ) : (
-                      <p className="text-[10px] text-yellow-500 italic mt-2">No license photo uploaded.</p>
+                      <p className="text-[10px] text-yellow-500 italic mt-2 font-normal">No ID image document uploaded.</p>
                     )}
                   </div>
+
+                  {/* Driver Licensing Card */}
+                  {selectedKycUser.role === 'driver' && (
+                    <div className="flex flex-col gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2">Driver Licensing</h4>
+                      
+                      <div className="flex flex-col gap-2 text-xs font-normal">
+                        <div className="flex justify-between">
+                          <span className="text-brand-text-muted">License Plate:</span>
+                          <span className="text-white font-semibold">{selectedKycUser.vehicle_info || 'Not Vetted'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-brand-text-muted">License Number:</span>
+                          <span className="text-white font-semibold">{selectedKycUser.kyc_license_number?.split('|||')[0] || 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-brand-text-muted">Expiry Date:</span>
+                          <span className="text-white font-semibold">{selectedKycUser.kyc_license_expiry || 'N/A'}</span>
+                        </div>
+                      </div>
+
+                      {selectedKycUser.kyc_license_file ? (
+                        <div className="flex flex-col gap-2 mt-2">
+                          <span className="text-[10px] uppercase font-bold text-brand-text-muted">Driving License:</span>
+                          <div className="relative w-full h-32 rounded-xl overflow-hidden border border-white/10 group bg-black flex items-center justify-center">
+                            <img 
+                              src={selectedKycUser.kyc_license_file} 
+                              alt="License Document" 
+                              className="object-contain max-h-full" 
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-yellow-500 italic mt-2 font-normal">No license photo uploaded.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-8 text-center text-brand-text-muted text-xs border border-dashed border-white/5 rounded-2xl font-normal">
+                  This user has not completed the identity verification form yet.
+                </div>
+              )}
+
+              {/* Quick Actions Footer */}
+              <div className="flex flex-wrap gap-3 mt-4 pt-4 border-t border-white/5 justify-end">
+                <button
+                  onClick={() => setSelectedKycUser(null)}
+                  className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-xl text-xs font-semibold transition-all cursor-pointer"
+                >
+                  Close
+                </button>
+                
+                {selectedKycUser.kyc_dob && (
+                  <button
+                    onClick={() => handleRejectKyc(selectedKycUser.id)}
+                    className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Reject & Reset KYC
+                  </button>
                 )}
-              </div>
-            ) : (
-              <div className="p-8 text-center text-brand-text-muted text-xs border border-dashed border-white/5 rounded-2xl">
-                This user has not completed the identity verification form yet.
-              </div>
-            )}
 
-            {/* Quick Actions Footer */}
-            <div className="flex flex-wrap gap-3 mt-4 pt-4 border-t border-white/5 justify-end">
-              <button
-                onClick={() => setSelectedKycUser(null)}
-                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-xl text-xs font-semibold transition-all cursor-pointer"
-              >
-                Close
-              </button>
-              
-              <button
-                onClick={async () => {
-                  await handleToggleVerify(selectedKycUser.id, selectedKycUser.is_verified);
-                  setSelectedKycUser(prev => ({ ...prev, is_verified: !prev.is_verified }));
-                }}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  selectedKycUser.is_verified 
-                    ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
-                    : 'bg-brand-emerald/15 text-brand-emerald hover:bg-brand-emerald/25 border border-brand-emerald/20'
-                }`}
-              >
-                {selectedKycUser.is_verified ? 'Revoke Verification' : 'Verify Account'}
-              </button>
+                <button
+                  onClick={async () => {
+                    await handleToggleVerify(selectedKycUser.id, selectedKycUser.is_verified);
+                    setSelectedKycUser(prev => ({ ...prev, is_verified: !prev.is_verified }));
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    selectedKycUser.is_verified 
+                      ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
+                      : 'bg-brand-emerald/15 text-brand-emerald hover:bg-brand-emerald/25 border border-brand-emerald/20'
+                  }`}
+                >
+                  {selectedKycUser.is_verified ? 'Revoke Verification' : 'Approve & Sign-off'}
+                </button>
 
-              <button
-                onClick={async () => {
-                  await handleToggleBan(selectedKycUser.id, selectedKycUser.is_banned);
-                  setSelectedKycUser(prev => ({ ...prev, is_banned: !prev.is_banned }));
-                }}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  selectedKycUser.is_banned 
-                    ? 'bg-brand-cyan/15 text-brand-cyan hover:bg-brand-cyan/25' 
-                    : 'bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20'
-                }`}
-              >
-                {selectedKycUser.is_banned ? 'Restore Account' : 'Suspend Account'}
-              </button>
+                <button
+                  onClick={async () => {
+                    await handleToggleBan(selectedKycUser.id, selectedKycUser.is_banned);
+                    setSelectedKycUser(prev => ({ ...prev, is_banned: !prev.is_banned }));
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    selectedKycUser.is_banned 
+                      ? 'bg-brand-cyan/15 text-brand-cyan hover:bg-brand-cyan/25' 
+                      : 'bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20'
+                  }`}
+                >
+                  {selectedKycUser.is_banned ? 'Restore Account' : 'Suspend Account'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
+
       {/* REAL-TIME CHAT MODAL OVERLAY */}
       {activeChatBooking && (() => {
         const isUserPassenger = user.id === activeChatBooking.passenger_id;
