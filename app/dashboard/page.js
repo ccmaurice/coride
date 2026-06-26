@@ -389,6 +389,7 @@ function DashboardContent() {
   // Toast Notification State
   const [toasts, setToasts] = useState([]);
   const [simulatorActive, setSimulatorActive] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(true);
 
   // Admin User Directory Filters
   const [adminSearchQuery, setAdminSearchQuery] = useState('');
@@ -525,6 +526,15 @@ function DashboardContent() {
     if (dest) setDestQuery(dest);
     if (tab) setActiveTab(tab);
   }, [searchParams]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const dismissed = localStorage.getItem('coride_onboarding_dismissed');
+      if (dismissed === 'true') {
+        setShowOnboarding(false);
+      }
+    }
+  }, []);
 
   // Check for pending ratings on load or user changes
   useEffect(() => {
@@ -812,21 +822,22 @@ function DashboardContent() {
 
     if (eventType === 0) {
       // EVENT: A driver posts a new commute route
-      const latOffset = (Math.random() - 0.5) * 0.08;
+      const latOffset = (Math.random() - 0.5) * 0.02;
+      const lngOffset = (Math.random() - 0.5) * 0.02;
       const newMockTrip = {
         id: `trip-sim-${Date.now()}`,
         driver_id: 'usr-sim-driver',
         driver_name: randomName,
         driver_avatar: `https://images.unsplash.com/photo-${1535713875000 + Math.floor(Math.random() * 1000)}?auto=format&fit=crop&w=150&q=80`,
         driver_rating: 4.8,
-        origin: 'East Bay Berkeley Office',
-        destination: 'Stanford University Campus',
+        origin: 'Kintambo Magasin',
+        destination: 'Lemba (Sous-région)',
         departure_time: new Date(Date.now() + 6 * 3600000).toISOString(),
         seats_available: 3,
         seats_total: 4,
-        price: 9.00,
-        preferences: { pets: true, smoking: false, music: 'Lo-Fi Beats', conversation: 'Flexible' },
-        route_coordinates: [[37.8715, -122.2730], [37.6879 + latOffset, -122.4702], [37.4275, -122.1697]]
+        price: 3.00,
+        preferences: { pets: true, smoking: false, music: 'Afrobeats', conversation: 'Flexible' },
+        route_coordinates: [[-4.3168, 15.2635], [-4.3414 + latOffset, 15.2856 + lngOffset], [-4.3444 + latOffset, 15.3115 + lngOffset], [-4.3942, 15.3188]]
       };
 
       const currentTrips = JSON.parse(localStorage.getItem('coride_mock_trips') || '[]');
@@ -835,7 +846,7 @@ function DashboardContent() {
       loadData();
 
       triggerNotification(
-        `🚗 ${randomName} just posted a new commute: Berkeley to Stanford!`,
+        `🚗 ${randomName} just posted a new commute: Kintambo to Lemba!`,
         'info',
         'Live Route Added'
       );
@@ -915,7 +926,7 @@ function DashboardContent() {
         loadData();
 
         triggerNotification(
-          `💵 Admin audited and APPROVED your $${randomClaim.subsidy_amount.toFixed(2)} Nabogo subsidy payout!`,
+          `💵 Admin audited and APPROVED your $${randomClaim.subsidy_amount.toFixed(2)} CoRide Fuel Bonus payout!`,
           'success',
           'Subsidy Disbursed'
         );
@@ -987,7 +998,7 @@ function DashboardContent() {
         setTimeout(() => {
           const targetTrip = trips.find(t => t.id === tripId);
           triggerNotification(
-            `Driver ${targetTrip?.driver_name || 'Alex Mercer'} accepted your booking for ${targetTrip?.destination || 'Stanford'}. Real-time tracking is now available!`,
+            `Driver ${targetTrip?.driver_name || 'Alex Mercer'} accepted your booking for ${targetTrip?.destination || 'UNIKIN'}. Real-time tracking is now available!`,
             'success',
             'Booking Accepted 🚗'
           );
@@ -1105,13 +1116,13 @@ function DashboardContent() {
       return;
     }
 
-    const latOffset = (Math.random() - 0.5) * 0.1;
-    const lngOffset = (Math.random() - 0.5) * 0.1;
+    const latOffset = (Math.random() - 0.5) * 0.02;
+    const lngOffset = (Math.random() - 0.5) * 0.02;
     const routeCoords = [
-      [37.7749, -122.4194],
-      [37.6213 + latOffset, -122.3790 + lngOffset],
-      [37.4852 + latOffset, -122.2364 + lngOffset],
-      [37.4275, -122.1697]
+      [-4.3032, 15.3120], // Gombe
+      [-4.3486 + latOffset, 15.3194 + lngOffset], // Limete
+      [-4.3942 + latOffset, 15.3188 + lngOffset], // Lemba
+      [-4.4172, 15.3124]  // UNIKIN
     ];
 
     const preferences = {
@@ -1339,7 +1350,7 @@ function DashboardContent() {
     }
 
     triggerNotification(
-      `Trip completed! Nabogo subsidy claim of $${amount} submitted for municipal verification.`,
+      `Trip completed! CoRide Fuel Bonus claim of $${amount} submitted for local verification.`,
       'success',
       'Subsidy Submitted'
     );
@@ -1920,14 +1931,14 @@ function DashboardContent() {
           </div>
         )}
 
-        {/* PARS Campus Integration Rewards */}
+        {/* CoRide Loyalty Points & Parking Rewards */}
         <div className="glass-panel rounded-2xl p-5 border border-white/10 bg-brand-purple/5">
           <div className="flex items-center gap-2 mb-3">
             <Award className="w-5 h-5 text-brand-purple" />
-            <h3 className="text-sm font-bold text-white">Campus Parking Points</h3>
+            <h3 className="text-sm font-bold text-white">Preferred Parking Points</h3>
           </div>
           <p className="text-xs text-brand-text-muted leading-relaxed mb-4">
-            Earn points by sharing rides with classmates. Swap points for reserved premium spots.
+            Earn points by sharing rides with others. Swap points for preferred parking slots at partner hubs.
           </p>
           <div className="flex justify-between items-center bg-white/5 p-3 rounded-xl border border-white/5">
             <div>
@@ -1936,7 +1947,7 @@ function DashboardContent() {
             </div>
             <div className="text-right">
               <span className="text-[10px] text-brand-text-muted">Reserved Spot</span>
-              <p className="text-xs font-semibold text-white">{campusRewards.reserved_spot || 'None - Claim spot'}</p>
+              <p className="text-xs font-semibold text-white">{campusRewards.reserved_spot || 'None - Claim slot'}</p>
             </div>
           </div>
           
@@ -1949,26 +1960,26 @@ function DashboardContent() {
                       .from('campus_rewards')
                       .update({
                         points: campusRewards.points - 50,
-                        reserved_spot: 'Lot A - Spot #08',
+                        reserved_spot: 'UNIKIN Parking - Spot A8',
                         updated_at: new Date().toISOString()
                       })
                       .eq('user_id', user.id);
                     if (error) throw error;
                     await loadData();
-                    triggerNotification('Reserved parking pass Lot A - Spot #08 successfully claimed!', 'success', 'Campus Integration');
+                    triggerNotification('Reserved parking pass UNIKIN Parking - Spot A8 successfully claimed!', 'success', 'Parking Rewards');
                   } catch (e) {
                     console.error(e);
-                    triggerNotification('Failed to claim spot in database.', 'warning', 'Error');
+                    triggerNotification('Failed to claim slot in database.', 'warning', 'Error');
                   }
                 } else {
-                  const updated = { points: campusRewards.points - 50, reserved_spot: 'Lot A - Spot #08' };
+                  const updated = { points: campusRewards.points - 50, reserved_spot: 'UNIKIN Parking - Spot A8' };
                   updateLocalStorage('campus_rewards', updated);
-                  triggerNotification('Reserved parking pass Lot A - Spot #08 successfully claimed!', 'success', 'Campus Integration');
+                  triggerNotification('Reserved parking pass UNIKIN Parking - Spot A8 successfully claimed!', 'success', 'Parking Rewards');
                 }
               }}
               className="w-full mt-3 py-2 rounded-xl bg-brand-purple text-brand-dark text-xs font-bold hover:opacity-90 transition-opacity cursor-pointer animate-pulse"
             >
-              Claim Spot (-50 pts)
+              Claim Slot (-50 pts)
             </button>
           )}
         </div>
@@ -2154,7 +2165,7 @@ function DashboardContent() {
         <div className="flex justify-between items-center bg-white/5 border border-white/10 rounded-2xl p-4 flex-wrap gap-4 relative">
           <div>
             <h1 className="text-lg font-bold text-glow-cyan text-white">Welcome back, {user.full_name}!</h1>
-            <p className="text-xs text-brand-text-muted mt-0.5">Explore commutes, verify peer KYC documents, and coordinate sustainable transit lines.</p>
+            <p className="text-xs text-brand-text-muted mt-0.5">Explore commutes, verify peer credentials, and coordinate shared transit lines in Kinshasa.</p>
           </div>
 
           {/* Bell Icon & Dropdown Wrapper */}
@@ -2215,6 +2226,55 @@ function DashboardContent() {
             )}
           </div>
         </div>
+
+        {showOnboarding && (
+          <div className="glass-panel rounded-3xl p-6 border border-brand-cyan/20 bg-brand-cyan/5 flex flex-col gap-4 relative animate-fade-in">
+            <button 
+              onClick={() => {
+                setShowOnboarding(false);
+                localStorage.setItem('coride_onboarding_dismissed', 'true');
+                triggerNotification('Onboarding guide dismissed. You can always access help in the menu.', 'info', 'Guide Closed');
+              }}
+              className="absolute top-4 right-4 text-brand-text-muted hover:text-white transition-colors cursor-pointer"
+              title="Dismiss Guide"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-brand-cyan animate-pulse" />
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider">Guide de Démarrage Rapide (Quick Start Guide)</h2>
+            </div>
+            
+            <p className="text-xs text-brand-text-muted leading-relaxed">
+              Bienvenue sur **CoRide Kinshasa**! Notre plateforme met en relation des conducteurs et des passagers pour partager les trajets quotidiens, réduire les embouteillages et économiser sur le carburant. Suivez ces 3 étapes simples pour commencer :
+            </p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-2">
+                <span className="w-6 h-6 rounded-full bg-brand-cyan/20 text-brand-cyan flex items-center justify-center font-bold text-xs">1</span>
+                <h3 className="text-xs font-bold text-white">Valider mon Profil (Verification)</h3>
+                <p className="text-[10px] text-brand-text-muted leading-relaxed">
+                  Tous les membres passent par une vérification d'identité (carte d'identité/passeport) pour assurer la sécurité de notre communauté.
+                </p>
+              </div>
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-2">
+                <span className="w-6 h-6 rounded-full bg-brand-emerald/20 text-brand-emerald flex items-center justify-center font-bold text-xs">2</span>
+                <h3 className="text-xs font-bold text-white">Rechercher ou Publier</h3>
+                <p className="text-[10px] text-brand-text-muted leading-relaxed">
+                  **Conducteurs**: publiez vos trajets et divisez vos frais. **Passagers**: recherchez des trajets correspondants et réservez votre siège.
+                </p>
+              </div>
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-2">
+                <span className="w-6 h-6 rounded-full bg-brand-purple/20 text-brand-purple flex items-center justify-center font-bold text-xs">3</span>
+                <h3 className="text-xs font-bold text-white">Coordonner & Voyager</h3>
+                <p className="text-[10px] text-brand-text-muted leading-relaxed">
+                  Utilisez notre messagerie intégrée pour fixer le point de rendez-vous, suivez le véhicule en direct sur la carte, et gagnez des bonus!
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {!user.is_verified && user.role !== 'admin' ? (
           <KYCForm 
@@ -2354,7 +2414,7 @@ function DashboardContent() {
                       <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-brand-cyan" />
                       <input 
                         type="text" 
-                        placeholder="Origin (e.g., San Francisco)" 
+                        placeholder="Origin (e.g., Gombe, Kintambo)" 
                         value={originQuery}
                         onChange={(e) => setOriginQuery(e.target.value)}
                         className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/5 text-white text-xs placeholder-brand-text-muted focus:outline-none focus:border-brand-cyan focus:ring-1 focus:ring-brand-cyan transition-all"
@@ -2364,7 +2424,7 @@ function DashboardContent() {
                       <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-brand-emerald" />
                       <input 
                         type="text" 
-                        placeholder="Destination (e.g., Stanford)" 
+                        placeholder="Destination (e.g., UNIKIN, Lemba)" 
                         value={destQuery}
                         onChange={(e) => setDestQuery(e.target.value)}
                         className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/5 text-white text-xs placeholder-brand-text-muted focus:outline-none focus:border-brand-emerald focus:ring-1 focus:ring-brand-emerald transition-all"
@@ -2551,7 +2611,7 @@ function DashboardContent() {
                       <Bell className="w-3.5 h-3.5" /> Real-Time Satellite Tracking Active
                     </p>
                     <p className="text-[10px] text-white/70 mt-1">
-                      Driver **{selectedTripForMap?.driver_name}** is navigating along the SF Peninsula commute line. Estimated arrival is 34 minutes.
+                      Driver **{selectedTripForMap?.driver_name}** is navigating along the Kinshasa commute line. Estimated arrival is 25 minutes.
                     </p>
                   </div>
                 ) : (
@@ -2582,7 +2642,7 @@ function DashboardContent() {
                       <input 
                         type="text" 
                         required
-                        placeholder="e.g., SF Downtown" 
+                        placeholder="e.g., Gombe (Centre-ville)" 
                         value={postOrigin}
                         onChange={(e) => setPostOrigin(e.target.value)}
                         className="py-2.5 px-4 rounded-xl bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-brand-cyan focus:ring-1 focus:ring-brand-cyan transition-all"
@@ -2593,7 +2653,7 @@ function DashboardContent() {
                       <input 
                         type="text" 
                         required
-                        placeholder="e.g., Stanford Lot C" 
+                        placeholder="e.g., UNIKIN Parking" 
                         value={postDestination}
                         onChange={(e) => setPostDestination(e.target.value)}
                         className="py-2.5 px-4 rounded-xl bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-brand-emerald focus:ring-1 focus:ring-brand-emerald transition-all"

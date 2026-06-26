@@ -27,7 +27,7 @@ export default function MapComponent({ routeCoordinates = [], animateCar = false
       maxZoom: 20
     });
 
-    const defaultCenter = [37.4275, -122.1697]; // Stanford University default
+    const defaultCenter = [-4.325, 15.312]; // Kinshasa default
     const map = L.map(mapRef.current, {
       center: defaultCenter,
       zoom: 11,

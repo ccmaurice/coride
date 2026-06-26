@@ -240,3 +240,43 @@ ON public.messages FOR INSERT WITH CHECK (
     where b.id = booking_id and (auth.uid() = b.passenger_id or auth.uid() = t.driver_id)
   )
 );
+
+-- 10. Seed Mock Trips in Kinshasa for Live Testing
+DELETE FROM public.trips WHERE id IN ('d4a4d62f-f4fe-4820-94a2-19e358c21b01', 'd4a4d62f-f4fe-4820-94a2-19e358c21b02');
+
+INSERT INTO public.trips (id, driver_id, origin, destination, departure_time, seats_total, seats_available, price, preferences, route_coordinates)
+VALUES 
+(
+  'd4a4d62f-f4fe-4820-94a2-19e358c21b01',
+  'd4a4d62f-f4fe-4820-94a2-19e358c21a02', -- Alex Mercer (Driver)
+  'Gombe (Centre-ville)',
+  'Université de Kinshasa (UNIKIN)',
+  NOW() + INTERVAL '4 hours',
+  4,
+  3,
+  2.00,
+  '{"pets": true, "smoking": false, "music": "Afrobeats", "conversation": "Friendly"}',
+  '[[-4.3032, 15.3120], [-4.3486, 15.3194], [-4.3942, 15.3188], [-4.4172, 15.3124]]'::jsonb
+),
+(
+  'd4a4d62f-f4fe-4820-94a2-19e358c21b02',
+  'd4a4d62f-f4fe-4820-94a2-19e358c21a04', -- Marcus Vance (Driver)
+  'Aéroport de Ndjili',
+  'Gombe (Centre-ville)',
+  NOW() + INTERVAL '2 hours',
+  3,
+  2,
+  5.00,
+  '{"pets": false, "smoking": false, "music": "Jazz", "conversation": "Quiet"}',
+  '[[-4.3856, 15.4439], [-4.3756, 15.3850], [-4.3486, 15.3194], [-4.3032, 15.3120]]'::jsonb
+) ON CONFLICT (id) DO NOTHING;
+
+-- Seed booking for Sarah on Alex's trip
+DELETE FROM public.bookings WHERE id = 'd4a4d62f-f4fe-4820-94a2-19e358c21c01';
+INSERT INTO public.bookings (id, trip_id, passenger_id, status)
+VALUES (
+  'd4a4d62f-f4fe-4820-94a2-19e358c21c01',
+  'd4a4d62f-f4fe-4820-94a2-19e358c21b01', -- Alex's trip
+  'd4a4d62f-f4fe-4820-94a2-19e358c21a03', -- Sarah Connor
+  'accepted'
+) ON CONFLICT (id) DO NOTHING;
